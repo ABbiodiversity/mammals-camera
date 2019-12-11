@@ -1,0 +1,1404 @@
+---
+title: "Processing Camera Data to Calculate Animal Density"
+author: "David Huggard, Marcus Becker"
+date: "October 15, 2019"
+output:
+  bookdown::html_document2:
+    highlight: zenburn
+    number_sections: yes
+    self_contained: yes
+    theme: paper
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    code_folding: hide
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '4'
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+    toc_depth: '4'
+always_allow_html: yes
+urlcolor: blue
+---
+
+```{r setup, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE}
+
+# Load packages
+library(tidyverse)
+library(mgcv)
+library(plotly)
+library(lubridate)
+library(knitr)
+library(here)
+library(DT)
+library(scales)
+
+# Path to data folder on ABMI Science Centre S: drive
+abmisc <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+
+# Set knitr chunk options
+opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE)
+
+```
+
+```{r data, cache=TRUE}
+
+# Import raw data and lookup tables
+
+# Raw native mammal data (2013-2018):
+df_native_all <- read_csv(paste0(abmisc,"base/ALL_native-mammals_09-01-2019.csv"),
+                          col_types = cols(distance = col_character(),
+                                           number_during_gap = col_number(),
+                                           number_individuals = col_character()),
+                          na = "")
+
+# Lookup tables
+
+# Species gap groups:
+df_gap_groups <- read_csv(paste0(abmisc,"lookup/species-gap-groups.csv")) %>%
+  # Name the groups for clarity
+  mutate(gap_group = case_when(
+    gap_group == 1 ~ "Most ungulates",
+    gap_group == 2 ~ "Moose",
+    gap_group == 3 ~ "Small carnivores",
+    gap_group == 4 ~ "Canids cougar",
+    gap_group == 5 ~ "Bears",
+    gap_group == 6 ~ "Small mammals"))
+
+# Camera operating dates/times:
+df_cam_startend <- read_csv(paste0(abmisc,"lookup/camera-startend-all.csv")) %>%
+  mutate(DeploymentYear = paste(deployment, year, sep ="_")) %>%
+  select(DeploymentYear, deployment, year, StartTime, EndTime)
+
+# Camera operating timeframes (wide):
+time.since.2009 <- read_csv(paste0(abmisc,"processed/Camera operating days since 2009 Feb 2019 ALL.csv"))
+time.by.day <- read_csv(paste0(abmisc, "processed/Camera operating days Feb 2019 ALL.csv"))
+df_tbd_summary <- read_csv(paste0(abmisc,"processed/Summary of camera operating days Feb 2019 ALL.csv"))
+
+# Lure information for all deployments:
+df_cam_lure <- read_csv(paste0(abmisc,"lookup/camera-lure-info-all.csv"))
+
+# Species distance groups:
+df_dist_groups <- read_csv(paste0(abmisc,"lookup/species-distance-groups.csv"))
+
+# Vegetation and Human Footprint (HF) information for each deployment:
+df_veghf_detdist <- read_csv(paste0(abmisc,"lookup/camera-soilveghf-detdist-all.csv"))
+
+# Veg-HF categories for detection distance models:
+df_veg_lookup <- read_csv(paste0(abmisc,"lookup/veg-pole-distance.csv"))
+
+```
+
+```{r params}
+
+# Set analysis parameters
+
+# Seasonal start/end dates (julian day):
+summer.start.j <- 106 # April 16
+summer.end.j <- 288 # October 15
+
+# Reconyx camera field-of-view angle:
+cam_fov_ang <- 42
+
+```
+
+# Overview: Simple explanation and assumptions {#overview}
+
+Density is the number of objects (trees, animals, etc.) per unit area. If a 100-m$^2$ plot contains one tree, the density is 1 tree/100-m$^2$, or 10,000 trees per km$^2$ ( Figure \@ref(fig:density)).  Similarly, if a camera has a field-of-view of 100-m$^2$ and there is always one animal in the field-of-view for the whole time that the camera is operating, the density of that species is 1 animal per 100-$m^2$, or 10,000 animals per km$^2$. It doesn’t matter if the animal is moving around within the field-of-view, as long as it stays in the field-of-view for the whole time. On the other hand, if that camera only has an animal in the field-of-view 1/10,000 of the time that it is operating, there is 1/10,000 animal per 100-$m^2$, or 1 animal per km-$^2$.  If the camera has two animals together for 1/10,000 of the time, this gives 2/10,000 animals per 100-m$^2$, or 2 animals per km-$^2$. This is how we use cameras to calculate density.
+
+<br>
+
+$$Density = \frac{\sum(number~of~individuals~*~time~in~field~of~view)}{area~of~field~of~view~*~total~camera~operating~time}$$
+The units are animal-seconds per area-seconds, which equates to animals per area (i.e. density).
+
+<br>
+
+```{r density, fig.cap="Illustration of density for a tree quadrat and camera surveys.", fig.align="center"}
+
+include_graphics(here("./docs/pics/density.png"))
+
+```
+
+For a given density of animals, this simple measure is independent of home range sizes or movement rates. If home ranges were twice as big, they would have to overlap twice as much to maintain the same density. Therefore, an individual would be in a particular camera’s field-of-view half as often (because its home range is bigger – it has more other places to be), but there would be twice as many individuals at that camera. If movement rates were twice as fast, an individual would pass by the camera twice as often, but would spend half as much time in the field-of-view (because it is moving faster). For the simple example above, there would be two visits to the camera each occupying 1/20,000 of the time the camera is operating, rather than one visit for 1/10,000 of the time.  The other way of putting this is that only the total animal-time in the field-of-view matters, whether that comes from one long visit by one individual, several short visits by one individual, or several short visits each by a different individual. In all those cases, the density is the same; it is only the home range size and overlap and/or movement rates that are changing.
+
+Two features of cameras require us to do some additional data processing to use this simple density measure: 
+
+  1. Cameras do not survey fixed areas, unlike quadrats. The probability of an animal triggering the camera decreases with distance. We therefore have to estimate an **effective detection distance** (EDD) for the cameras, as is done for unlimited-distance point counts for birds or unlimited distance transect surveys. This effective distance can vary for different species, habitat types and time of year. 
+  
+  2. Cameras take a series of images at discrete intervals, rather than providing a continuous record of how long an animal is in the field-of-view. The discrete intervals need to be converted to a continuous measure to show how long the animal was in the field-of-view, accounting for the possibility that a moderately long interval between images might be from an animal present but not moving much, and therefore not triggering the camera, versus an animal that left the field-of-view and returned. The analyses dealing with these complications are outlined below.
+
+There are a number of strong assumptions involved in using this measure to estimate density of a species. A couple big assumptions are: 
+
+  + The cameras are a random or otherwise representative sample of the area. The density estimate applies to the field-of-view of the cameras. To make inferences about a larger region, the cameras need to be surveying a random or representative (e.g., systematic, systematic-random, random stratified) sample of the larger region. In particular, if cameras are intentionally placed in areas where species are more common, such as game trails, then the density estimate only applies to those places, not to a larger region.  
+  
+  + Animals are not attracted to or repelled by the cameras (or posts used to deploy the cameras, etc).  That also means that they do not spend more or less time in front of the camera because of the presence of the camera. The effect of lures or other attractants needs to be explicitly measured and accounted for. 
+  
+There are additional assumptions involved in the procedures to estimate effective detection distance, including an assumption that all animals within a certain distance of the camera are detected, and in converting the discrete images into time in field-of-view. These assumptions are discussed below. Because the world is complicated, assumptions are never met perfectly. The important thing is to consider – and, ideally, design auxiliary tests to measure – is whether the violations are serious enough to impact the answer to whatever question(s) the cameras are being used to answer. In many cases, absolute density estimates may not be accurate, but the results can still serve as a useable index of relative density, if assumptions are violated about equally in whatever units are being compared (habitat types, experimental treatments, years for long-term trend, etc).
+
+A final consideration is the sampling distribution of density estimates. Because individual cameras sample tiny areas compared to the home ranges of the species they survey, the resulting sampling distribution can be horrendous – the majority of cameras never detect the species at all (density = 0), a few cameras record the species passing by once or twice for brief periods (low densities), and a very few number of cameras record long durations as the animals forage, rest, or play in front of the camera, or revisit a favourite spot repeatedly (very high densities). Longer duration camera deployments can help smooth out some of that extreme variation, but ultimately large numbers of cameras are required for precise estimates. Appropriate questions, rigorous study designs and modest expectations are required for camera-based studies.
+
+> Fix the numbering etc on this section below.
+
+The following sections give details of components of this density estimate (how ABMI collects the necessary information, results, assumptions, tests – sections 2 to 5), other factors that need to be considered in some designs – sections 6 to 8), and further discussion of the basic assumptions and dealing with the sampling distribution (sections 9 and 10).
+
+# Tagging images and checking accuracy
+
+ABMI cameras have generated about 15 million images so far. Some of these are images taken at fixed time intervals to document the site conditions and verify that the camera was operating. The majority of the images are motion-triggered, and need to have their content identified. We use several automated processes to reduce the number of images that human taggers need to look at:
+
+  1. Neural network “auto-taggers” are trained to recognize images with no animals (“None” images) and images with domestic cows.
+  
+  2. A two-stage subsampling procedure is used with series of 6 or more images separated by less than a two-minute cut-off: 5 randomly selected images are tagged by humans and used to fill in the rest of the series, unless a native mammal is detected in any of the 5 images, in which case all images in the series are tagged by people.
+  
+  3. Additional auto-filling rules are used when a substantial number of images in a series are tagged by an auto-tagger, and for images that occur at the start or end of a deployment that are staff setting up cameras.
+  
+Cut-off scores for the auto-taggers, the subsampling approach and the other rules were all developed using data from millions of images and were set so that they are expected to miss <0.1% of images of native animals.  With these procedures, approximately 15% of images are tagged by humans.
+
+After all images have been tagged, we do a second species-by-species check of all identified native mammals to look for errors, including in difficult to separate species, such as marten and fisher, or white-tailed and mule deer (and we include categories for unknown deer or other groups).
+
+Finally, we do another test of 5,000 randomly selected images from each of the different processes – auto-tagged None, auto-tagged Cows, filled-in subsampled series, human-tagged None, human-tagged cows, human-tagged native mammals – to assess final accuracy. The automated processes all miss <0.1% of native mammals. Human taggers have a somewhat higher error rate, generally for ambiguous images. These error rates are about 100+ times better than we find for surveys of birds or plants.  Details of the tagging processes and the accuracy tests are available in separate documents.
+
+# Native mammal data
+
+We begin with the entirety of the native mammal image data, collected from all deployments across all years. This includes both on- and off-grid ABMI deployments, as well as supplementary data from other research programs and partners.
+
+## Sampling coverage
+
+The following map shows the distribution of ABMI camera deployments throughout the province from 2015-2018. 
+
+```{r map_deployments, out.width="70%"}
+
+include_graphics(here("docs/pics/map_deployments.png")) 
+
+```
+
+## Summary statistics
+
+First, let's look at the format the data comes in[^1]. There are total of `r nrow(df_native_all)` individual image observations, each with information on which camera deployment it came from, the date and time the image was taken, the species observed, the sex and age class of the animal, and supplemental information for gap and distance analysis (discussed below). 
+
+[^1]: This data has been pre-processed, for which scripts can be found on the Github repo.
+
+```{r}
+
+# View a random sample of the data
+kable(sample_n(df_native_all, size = 10))
+
+```
+
+Next we can summarise the number of images captured by species (common name) between 2013 and 2018 in Figure \@ref(fig:images). \@ref(fig:density)
+
+```{r images, fig.cap="Total images captured to-date (2013-2018)."}
+
+df_native_top11 <- df_native_all %>%
+  filter(!common_name == "Deer") %>%
+  group_by(common_name) %>%
+  summarise(images = n()) %>%
+  arrange(desc(images)) %>%
+  top_n(n = 11, wt = images)
+
+plot1 <- df_native_top11 %>%
+  mutate(common_name = fct_reorder(as.factor(common_name), images)) %>%
+  ggplot(mapping = aes(x = common_name, y = images, fill = common_name)) +
+  geom_col(color = "black") +
+  # geom_text(aes(label = images, y = images + 15000), size = 3) +
+  scale_fill_viridis_d() +
+  coord_flip() +
+  scale_y_continuous(labels = scales::comma) +
+  theme_light() +
+  labs(title = "Total number of images captured for 11 common species",
+       y = "Images") +
+  theme(legend.position = "none",
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11),
+        axis.title.x = element_text(size = 13),
+        axis.text.x = element_text(size = 10, hjust = 1, angle = 45))
+
+plot1
+
+```
+
+White-tailed and Mule deer account for a large percentage of images taken to-date by remote cameras, following by moose, elk, and black bear. 
+
+Below we plot the number of images taken of each species by year (the top 11). 
+
+```{r}
+
+# Is this an effective visualization? Maybe not.  
+
+plot2 <- df_native_all %>%
+  filter(common_name %in% df_native_top11$common_name,
+         Year >= 2015) %>%
+  left_join(df_native_top11, by = "common_name") %>%
+  mutate(common_name = fct_reorder(common_name, images, .desc = TRUE)) %>%
+  group_by(common_name, Year) %>%
+  summarise(images = n()) %>%
+  ggplot(mapping = aes(x = Year, y = images, fill = common_name)) +
+  geom_col(color = "black") +
+  scale_fill_viridis_d(direction = -1) +
+  scale_y_continuous(labels = scales::comma) +
+  facet_wrap(~common_name, scales = "free_y", nrow = 3) +
+  theme_classic() +
+  labs(x = "",
+       y = "Number of Images") +
+  theme(legend.position = "none",
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+  
+plot2
+
+```
+
+Next: Other summaries?
+
+# Processing data
+
+There are a number of processing steps that need to be done to develop the necessary ingredients for density estimation. 
+
+## Identify series'
+
+This is where we package up all the individual images into what we call "series", or a collection of continuous images we assume to be of the same individual animal. A series will always involve the same deployment and species, and images are considered to be part of a series if they are less than 120 seconds apart.  
+
+```{r}
+
+# Identify series'
+
+df_series <- df_native_all %>%
+  # Transform date_time_taken to POSIXct object
+  mutate(date_time_taken = ymd_hms(date_time_taken)) %>%
+  # Order observations
+  arrange(deployment, Year, common_name, date_time_taken) %>%
+  # Identify series
+  mutate(series_num = 0,
+         # Lagged date_time_taken
+         date_time_taken_lag = lag(date_time_taken),
+         # Calculate difference in time (seconds) between images
+         diff_time = as.numeric(date_time_taken - date_time_taken_lag),
+         # Lagged species
+         common_name_lag = lag(common_name),
+         # Is it a different species? (boolean)
+         diff_sp = ifelse(common_name != common_name_lag, TRUE, FALSE),
+         # Lagged deployment
+         deployment_lag = lag(deployment),
+         # Is it a different deployment? (boolean)
+         diff_dep = ifelse(deployment != deployment_lag, TRUE, FALSE),
+         # Identify series
+         diff_series = ifelse(diff_dep == TRUE | diff_sp == TRUE | diff_time > 120,
+                              1, 0),
+         # Number series
+         series_num = c(0, cumsum(diff_series[-1])),
+         # Flag gaps that need checking later
+         gap_check = ifelse(diff_dep == FALSE & diff_sp == FALSE & (diff_time <= 120 & diff_time >= 20),
+                            1, 0),
+         # Lagged gap class (to align with gap_check and diff_time)
+         gap_class_lag = lag(gap_class)) %>%
+  # Clean up species common_name
+  filter(!common_name == "Falcons and allies") %>%
+  filter(!common_name == "Wolves, Coyotes and Allies") %>%
+  mutate(common_name = ifelse(common_name == "Foxes", "Red fox", common_name),
+         common_name = ifelse(common_name == "Mule Deer", "Mule deer", common_name))
+
+```
+
+## Develop models for probabilistic gaps
+
+From a pilot study, we determined that if there is a gap of <20 seconds between images of the same species at a camera, the animal is almost always still in the view (no evidence of it walking out and returning). Missing the odd time when it leaves the view for less than 20 seconds has little effect on estimates of the total time it is in the field-of-view. At the other end, if there is a gap of >120 seconds between images of the same species, this almost always represented animals leaving and then returning (i.e., the animal is seen walking out of the field-of-view, then walking back in). Gaps of 20-120 seconds are uncertain. These relatively long periods when the animal could be in the field-of-view or not are important when estimating the total durations animals are in the field-of-view, and thus density.
+
+For the 2015 ABMI images, we checked each 20-120 second gap in series of native mammals for evidence of the animal leaving and returning. For 2016 and 2017 ABMI images, we checked 20-120 second gaps only for less common species where we had low sample size from 2015. We looked at several images on either side of gaps of 20-120 seconds. In each sequence, the animal was designated as having left the field-of-view during the 20-120 second gap if there was clear evidence of it walking out of the field-of-view and then returning (or a different individual entering the field-of-view). If the animal stayed in one location within the field-of-view, or sequential images showed the animal in disconnected places (as often happens with smaller animals), the animal was assumed to have stayed.
+
+From `df_series` we filter for images that were flagged as requiring a gap check (`$gap_check`) and had the gaps between images manually classified in 2015 (or later years for some species or studies). Four gap classifications are possible[^2]:
+
+[^2]: There is a fourth gap class, 'N', which is added to flag cases where a None image follows a native mammal image.  
+
++ **L** - the animal was in the process of leaving the camera field of view;
++ **P** - the animal stayed in the field of view ('present');
++ **U** - uncertain whether the animal stayed or left. 
+
+We then create a new variable, `left`, which indicates whether the animal stayed (gap class = P) or left (gap class = L or U).
+
+We can visualize this data in \@ref(fig:gap_raw), which displays the same common species seen before. 
+
+```{r gap_raw, fig.cap="Plots of image gap length (s) and whether the animal stayed in the camera field of view or left."}
+
+df_gapcheck <- df_series %>%
+  filter(!is.na(gap_class_lag) & gap_check == "1") %>%
+  select(common_name, gap_class_lag, diff_time) %>%
+  mutate(left = ifelse(gap_class_lag == "P", 0, 1)) %>%
+  select(-gap_class_lag)
+
+# Subset of species - top 11
+df_gapcheck_sub <- filter(df_gapcheck, common_name %in% df_native_top11$common_name) %>%
+  left_join(df_native_top11, by = "common_name") %>%
+  mutate(common_name = fct_reorder(factor(common_name), images, .desc = TRUE))
+
+plot3 <- df_gapcheck_sub %>%
+  mutate(left = as.factor(left)) %>%
+  ggplot(mapping = aes(x = diff_time, y = left, color = common_name)) +
+  geom_jitter(height = 0.25) +
+  facet_wrap(~common_name, nrow = 5) +
+  scale_color_viridis_d(direction = -1) +
+  scale_y_discrete(labels = c("Stayed", "Left")) +
+  scale_x_continuous(breaks = seq(20, 120, by = 20), limits = c(20,120)) +
+  labs(y = "",
+       x = "Gap Length (s)",
+       title = "Did the animal leave the camera field of view?") +
+  theme_light() +
+  theme(legend.position = "none",
+        strip.text = element_text(color = "black"))
+
+plot3
+
+```
+
+We used this data to develop models of the probability of a species leaving the field-of-view during a 20-120 second gap as a function of the gap duration. Smoothing splines were fit to the probability of leaving as a function of gap length, using a logit-linked binomial model. This was done separately for each species with enough examined gaps (\@ref(fig:gap-species-model)).  
+
+```{r gap-species-model, fig.cap="Probability that an animal leaves the field-of-view, based on clear evidence from the images, for gaps between images of 20-120 seconds."}
+
+# Develop smoothing spline models
+mod_gapcheck_sub <- df_gapcheck_sub %>%
+  group_by(common_name) %>%
+  nest() %>%
+  mutate(model = map(.x = data, ~ smooth.spline(x = .$diff_time, y = .$left, df = 3)),
+         pred = map(.x = model, ~ predict(., type = "response", x = 20:120))) %>%
+  select(common_name, pred) %>%
+  unnest_wider(pred) %>%
+  unnest(cols = c(x,y)) %>%
+  rename(seconds = x, pred = y)
+
+# To-do: develop model for all species together.
+
+# Plot individual species results
+plot4 <- mod_gapcheck_sub %>%
+  ggplot(mapping = aes(x = seconds, y = pred, color = common_name)) +
+  geom_line(size = 1.5) +
+  scale_color_viridis_d(direction = -1) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.1), limits = c(0, 1)) +
+  scale_x_continuous(breaks = seq(20, 120, by = 20), limits = c(20,120)) +
+  labs(x = "Gap length (s)",
+       y = "Probability of Leaving",
+       title = "Relationship between gap length and the probability of leaving\nthe camera field of view.") +
+  theme_light() +
+  theme(legend.title = element_blank(),
+        axis.title = element_text(size = 13))
+
+plot4
+
+# Interactive
+ggplotly(plot4)
+
+```
+
+Examining the resulting curves and trying to keep similar species together, species were grouped into 6 “gap groups”: all ungulates except moose, moose, bears, cougars and canids, all other carnivores (mostly mustelids), and all other mammals (small species). Gap probability models were built for each group.
+
+```{r gap-group-model}
+
+# Gap group models
+mod_gapcheck_group <- df_gapcheck %>%
+  # Join in gap groups lookup table
+  left_join(df_gap_groups, by = "common_name") %>%
+  group_by(gap_group) %>%
+  nest() %>%
+  mutate(model = map(.x = data, ~ smooth.spline(x = .$diff_time, y = .$left, df = 3)),
+         pred = map(.x = model, ~ predict(., x = 20:120))) %>%
+  select(gap_group, pred) %>%
+  unnest_wider(pred) %>%
+  unnest(cols = c(x,y)) %>%
+  rename(diff_time = x, pred = y) %>%
+  ungroup()
+
+```
+
+Across all species, there is a 27% chance that the species left when the gap was only 20 seconds long. That implies that they may also have left in slightly shorter gaps, where we assume they all stayed. However, it makes little difference to the total duration to miss a few shorter gaps where the animals left (i.e., to add that extra little bit of time in), especially because we add time to the start and end of a series (next section). At the other end, there was evidence that animals left in about 70% of the 120 second gaps.  Snowshoe hares, porcupines and black bears lowered that average. The first two are small mammals that trigger the camera erratically, making it hard to figure out which way they are moving, so that they generally don’t present definitive evidence of leaving the field-of-view and returning. Bears, and wolves to a lesser extent, often lie/loll around, mainly at lured deployments, and could go for relatively long periods without triggering the camera. Missing long periods when bears are present but not moving would lead to underestimates of their densities. For trend estimates and habitat modeling, we would have to assume that the prevalence of those misses does not change over time or by habitat type. The other species had higher leaving rates for long gaps, so that we are probably not too inaccurate to assume that they left during any gap >120 seconds.
+
+Ideally, each gap between images would be checked to see if the animal left or not. However, the process of checking each gap is time-consuming. When we have direct information on gap-leaving, we define a series as any set of images separated by <120 seconds, unless the animal was observed to leave the field-of-view (in gaps of 20-120 seconds that were checked) (illustrated in \@ref(fig:gap-illustration)). If it did leave in a gap, then the series ends at the preceding image, and a new series starts when the animal (or a different individual) returns in the subsequent image. The species is in the field-of-view from the first to the last image in the field-of-view (plus end buffers; next sub-section).
+
+When we haven’t examined 20-120 second gaps, a series is all images separated by <120 seconds. However, we then use the above models of gap-leaving probabilities to prorate the 20-120 second gaps for the probability that the species left for a gap of that length. Instead of the full 20-120 second gap length, we only add the duration of the gap x (1 – probability of leaving) to the total series length (illustrated in \@ref(fig:gap-illustration), bottom). For example, if there were 4 images separated by 10 seconds, 5 seconds, 60 seconds and 10 seconds, and the model for that species showed a 40% chance that it left in a gap of 60 seconds, then the total time in the field-of-view for that series is 10 + 5 + 60 x (1 - 0.4) + 10 = 61 seconds.  (And, if there were an average of 1.25 individuals in those 4 images, the total animal-seconds would be 1.25 x 61 = 76.25 animal-seconds). 
+
+Finally, we must consider the time before the first image and after the last image of a series, and time to allocate to single-image series'. We estimate that by calculating the average time between images in all series, separately by species (Table 1). This is typically 4-7 seconds for larger species and somewhat longer for small species. This time is added to the duration of each series, including to single-image series, which would otherwise have a duration of 0 seconds (striped sections in \@ref(fig:gap-illustration). The assumption is that the animal is in the field-of-view for half the average inter-photo time before the first image, and after the last image. (Although animals often appear to be further into the field-of-view when the first image is taken, and nearer the edge when the final one is taken, presumably reflecting a lag-time in the motion-detector – the assumption is that this averages to the average interval within series). When we have 20-120 second gaps that are using the probabilistic gap-leaving model, we add this extra time on the start and end of the whole series in the normal way, and we also added this time multiplied by the probability of leaving for each 20-120 second gap, to account for the cases where the animal would have left the field-of-view in those 20-120 second gaps and hence created another series (bottom of \@ref(fig:gap-illustration)). 
+
+```{r gap-illustration, fig.cap="Illustration of how sequential individual images are converted to series, and how the species' total time in the field-of-view is calculated for each series, when we have directly examined gaps of 20-120 seconds (top) or not examined them and used probabilistic model instead (bottom)."}
+
+include_graphics(here("./docs/pics/gap_illustration.png"))
+
+```
+
+Here we re-run series numbering to include the checked gap information and flag gaps that will need probabilistic time assignment. We also calculate the average time between images in a series by species (Table \@ref(tab:tbi)).
+
+```{r tbi, fig.cap=""}
+
+df_series_2 <- df_series %>%
+  mutate(gap_class_lag = replace_na(gap_class_lag, "")) %>%
+  mutate(diff_series_2 = 
+           ifelse(diff_sp == TRUE | 
+                  diff_dep == TRUE | 
+                  diff_time > 120 | 
+                  (gap_class_lag == "L" | gap_class_lag == "N"),
+                  1, 0)) %>%
+  # Recalculate series numbering
+  mutate(series_num = c(0, cumsum(diff_series_2[-1]))) %>%
+  # Flag gaps that need probabilistic time assignment
+  mutate(prob_gap = 
+           ifelse(gap_check == 1 &
+                  (gap_class_lag == "" | gap_class_lag == "U"),
+                  1, 0)) %>%
+  mutate(prob_gap = replace_na(prob_gap, 0))
+
+# Calculate time between images (tbi), by species.
+df_tbi <- df_series_2 %>%
+  mutate(series_num_lag = lag(series_num)) %>%
+  filter(series_num == series_num_lag) %>%
+  group_by(common_name) %>%
+  summarise(time_btwn_photos = round(mean(diff_time), digits = 2),
+            sample_size = n())
+
+# Create table
+df_tbi %>%
+  top_n(20, wt = sample_size) %>%
+  arrange(desc(sample_size)) %>%
+  kable(col.names = c("Species", "Average time", "Sample size"),
+        caption = "Average time between images within a series, by species.",
+        align = c("l", "r", "r"))
+
+```
+
+Next, for unclassified 20-120 second gaps, we adjust for the probability of having left by using the predicted probabilistic time assignment from the above models. The appropriate gap group model is used for each species.  
+
+```{r}
+
+df_series_3 <- df_series_2 %>%
+  # Join in gap group information
+  left_join(df_gap_groups, by = "common_name") %>%
+  # Join in probabilistic gap information
+  left_join(mod_gapcheck_group, by = c("gap_group", "diff_time")) %>%
+  mutate(pred = replace_na(pred, 1),
+         diff_time_adj = round(ifelse(prob_gap == 1, 
+                                diff_time * (1 - pred), 
+                                diff_time), digits = 2))
+
+```
+
+## calculate total time in front of camera
+
+We then proceed to calculate the total time for each series, first for multi-image series' and then single image series'.
+
+```{r}
+
+# Time for multiple-image series (tfs)
+df_tfs_1 <- df_series_3 %>%
+  # First we have to remove the first image (w/ large diff_time_adj).
+  mutate(series_num_lag = lag(series_num)) %>%
+  filter(series_num_lag == series_num) %>%
+  group_by(series_num) %>%
+  # Calculate number of images in each series, then the total time.
+  summarise(count = n(),
+            total_time = sum(diff_time_adj))
+
+# Time for single-image series'
+df_tfs_2 <- df_series_3 %>%
+  mutate(series_num_lag = lag(series_num)) %>%
+  group_by(series_num) %>%
+  # Count the number of photos in each series.
+  summarise(count = n()) %>%
+  # Filter for series' with only one photo.
+  filter(count == 1) %>%
+  # For now, total time in the field of view is 0.
+  mutate(total_time = 0) %>%
+  # Add multi-photo series' df back in.
+  bind_rows(df_tfs_1) %>%
+  arrange(series_num)
+
+```
+
+The next step is to add time before the first photo and after the last photo, which is assumed to be the average of that species time between images (`df_tbi`). For single image series, this is the entire length of time.  
+
+```{r}
+
+df_tfs_final <- df_series_3 %>%
+  # Add tbi information
+  left_join(df_tbi, by = "common_name") %>%
+  select(series_num, common_name, time_btwn_photos) %>%
+  distinct() %>%
+  # Join to previous time calculation 
+  left_join(df_tfs_2, by = "series_num") %>%
+  mutate(series_total_time = total_time + time_btwn_photos) %>%
+  select(series_num, common_name, count, series_total_time)
+  
+```
+
+Finally, we account for the number of individuals in the series. The number of individuals of each species visible in each image are simply counted. Juveniles – often in company of their mothers – are counted and therefore included in the density estimates. We note age class of each animal so that we could exclude non-adults if we wanted for some analysis (assuming we are confident in that designation in all images). Distant animals are sometimes captured in images triggered by an individual closer to the camera. We count all individuals, because it is not clear how we would know an individual was too distant to trigger the camera. To be consistent, when we are collecting data on animals in front of or behind the 5m pole, we also include all individuals, even distant individuals when a closer animal clearly triggered the image. Distant animals therefore increase the effective detection distance, although only to the same extent as any animal beyond the 5m pole.
+
+Series of images showing continuous presence of a species in front of the camera (defined in the next subsection) can have different numbers of individuals. Because the density measure only requires total animal-seconds – i.e., it doesn’t matter which individual(s) is/are in front of the camera at any one time – we simply take the average number of individuals in each photograph in the series. A series with 1, 1, 2 and 1 individual in its four photos would have 1.25 individuals present on average. This may produce a slight upward bias in the density index, because it is possible that the camera would be triggered more often when there are more individuals in front of the camera (because one individual is more likely to be moving, and there is more likely to be an individual closer to the camera’s motion detectors). More individuals may therefore be associated with shorter intervals between images than the average for the series. A more precise approach might be to do a time-weighted average number of individuals in the series, where the time for each image is the interval from the mid-point between it and the previous image, and the mid-point with the subsequent image. This more complicated time-weighted average has not yet been implemented at ABMI, because it probably makes little difference to the estimate, even when variable numbers of individuals are present in a series.
+
+```{r}
+
+# Count number of animals in each series, and compute average across a series
+
+df_n_ani <- df_series_3 %>%
+  mutate(number_individuals = replace_na(number_individuals, 1),
+         # Assume VNA is 1
+         number_individuals = as.numeric(ifelse(number_individuals == "VNA", 1, number_individuals))) %>%
+  group_by(series_num) %>%
+  # Calculate number of images in each series, then the average number of individuals per series.
+  summarise(n_photos = n(),
+            mean_animals = mean(number_individuals))
+  
+```
+
+Using this information we calculate the total 'animal-unit-seconds' for each series. 
+
+```{r}
+
+df_series_4 <- df_series_3 %>%
+  group_by(series_num) %>%
+  arrange(date_time_taken) %>%
+  # Use the first image of each series.
+  filter(row_number() == 1) %>%
+  left_join(df_n_ani, by = "series_num") %>%
+  left_join(df_tfs_final, by = c("series_num", "common_name")) %>%
+  mutate(DeploymentYear = paste(deployment, Year, sep = "_")) %>%
+  select(DeploymentYear, deployment, year = Year, date_time_taken, series_num, n_photos, common_name, sex,
+         age_class, mean_animals, series_total_time) %>%
+  ungroup()
+
+  # Add lure here?
+
+# Potential issue to flag - seems to be some disagreement btwn multiple_animals and number_animals. 
+
+```
+
+```{r include=FALSE, eval=FALSE}
+
+# Remove mammal records after final end or in intermediate end-start periods
+
+# Cameras with multiple deployment periods:
+df_cam_multper <- df_cam_time_lure %>%
+  group_by(DeploymentYear) %>%
+  tally() %>%
+  filter(n > 1)
+
+# OK, the problem we have is tracking: i) cameras w/ multiple deployment periods (on purpose).
+# ii) cameras w/ multiple deployment periods (accidentally)
+# iii) cameras that recored no images of native mammals. 
+
+test <- df_series_4 %>%
+  left_join(df_cam_time, by = "DeploymentYear") %>%
+  mutate(valid = ifelse((date_time_taken >= StartTime | date_time_taken <= EndTime), TRUE, FALSE))
+
+```
+
+Series summary stats, including number of series, unique sites, number of individuals, and total duration in front of camera by species and year, are available in Table \@ref(tab:series-summary).
+
+```{r series-summary, fig.cap=""}
+
+# Count number of images by year and species
+df_series_2_img <- df_series_2 %>%
+  group_by(common_name, Year) %>%
+  count(name = "images") %>%
+  ungroup() %>%
+  mutate(year = as.character(Year)) %>%
+  select(-Year)
+
+df_series_summary <- df_series_4 %>%
+  # Only look at 2015-2018
+  filter(year >= "2015") %>%
+  group_by(common_name, year) %>%
+  summarise(series = n(),
+            sites = n_distinct(deployment),
+            total_indiv = floor(sum(mean_animals)),
+            total_dur_s = sum(series_total_time),
+            total_dur_m = floor(total_dur_s / 60),
+            total_dur_h = round((total_dur_m / 60), digits = 2),
+            mean_dur_s = round((total_dur_s / series), digits = 2)) %>%
+  mutate(year = as.character(year)) %>%
+  # Join yearly stats (leaving out < 2015)
+  left_join(df_series_2_img, by = c("common_name", "year")) %>%
+  select(common_name, year, images, everything())
+
+# Create datable for html display.
+datatable(df_series_summary,
+          rownames = FALSE,
+          filter = "top",
+          colnames = c("Species", "Year", "Images", "Series", "Sites", "Individuals",
+                       "Seconds", "Minutes", "Hours", "Mean Time"))
+
+```
+
+## Time cameras are operating
+
+The next ingredient in the density calculation is accounting for the total time that the camera deployments are operating. For many cameras, the total operating time is simply the time from just after the initial set-up to just before the final collection. However, some cameras fail before they are picked up, most often because they run out of memory or battery power after taking many pictures of cows, vegetation or occasionally perching birds. Other cameras fail because they fall over or are knocked over by cows. We use specific criteria for determining when a camera is too displaced to use – if the 5m pole is no longer in the image field, or the camera is tilted >30° from horizontal. Some of those may be re-established either during a mid-season visit or simply when the camera tilts back (e.g. if it is on a post that cows lean on), leading to a gap in operating time for the camera.
+
+Times each ABMI camera was operating are illustrated in Figure \@ref(fig:dep-duration). Many off-grid cameras, which target specific habitat types to improve habitat models or address other specific questions, or non-ABMI studies incorporated into the ABMI database, are set out at different times on-grid cameras. Recent years have included some cameras that were deployed in the fall and left out through the winter and following summer. Variation in start and end dates has increased over the four years, due to operational logistics (crew availability and site access). Cameras in the south-central part of the province were more likely to have short operating times because of cows. Besides creating different total operating times that need to be included in the density estimates, the varying deployment periods interact with seasonal variation in detectability of different species, which we need to address in the analysis (section **UPDATE**).
+
+```{r dep-duration, fig.cap="ABMI camera deployment durations during the 2018 field season."}
+
+winter_start <- as.POSIXct("2017-10-15")
+winter_end <- as.POSIXct("2018-04-18")
+summer_end <- as.POSIXct("2018-10-15")
+
+inter1 <- interval(winter_start, winter_end)
+inter2 <- interval(winter_end, summer_end)
+
+plot5 <- df_cam_startend %>%
+  # Some weird values to filter out. 
+  filter(StartTime != "#VALUE!",
+         EndTime != "#N/A",
+         EndTime != "#VALUE!") %>%
+  mutate(StartTime = ymd_hm(StartTime),
+         EndTime = ymd_hm(EndTime)) %>%
+  filter(str_detect(deployment, "ABMI"),
+         year == "2018",
+         StartTime > "2017-09-01") %>%
+  mutate(deployment = as.factor(deployment)) %>%
+  mutate(deployment = fct_reorder(deployment, StartTime, .desc = TRUE)) %>%
+  ggplot(mapping = aes(y = deployment)) +
+  geom_segment(mapping = aes(x = StartTime, xend = EndTime, 
+                             y = deployment, yend = deployment),
+               color = "cornflowerblue") +
+  geom_vline(xintercept = as.numeric(winter_start), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end), 
+             col = "darkred", size = 1, linetype = 2) +
+  scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
+  annotate("text", 
+           x = as.POSIXct(inter1@start + as.duration(inter1) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2@start + as.duration(inter2) / 2),
+           y = 35, label = "Summer", size = 7) + 
+  labs(y = "ABMI Deployments",
+       title = "ABMI camera deployment durations for the 2018 field season") +
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_text(size = 13, face = "bold"),
+        axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+        axis.title.x = element_blank())
+
+plot5
+
+```
+
+Figure \@ref(fig:dep-cumulative) shows the cumulative number of cameras operating over the course of the year.
+
+```{r dep-cumulative, fig.cap="Cumulative number of ABMI cameras operating throughout the 2018 field season."}
+
+# Line graph showing the cumulative number of cameras operating over the course of the year.
+
+df_cam_op_2018 <- time.since.2009 %>%
+  filter(str_detect(DeploymentYear, "ABMI")) %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  mutate(Year = as.character(Year)) %>%
+  filter(Year == "2018") %>%
+  select(-c(Deployment, Year)) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Date")
+
+days <- seq(as.POSIXct("2009-01-01"), as.POSIXct("2019-03-03"), by = "days")
+
+plot6 <- data.frame(Date = days, Num_Cameras = df_cam_op_2018$.) %>%
+  filter(Date >= "2017-09-01") %>%
+  ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
+  geom_area(fill = "cornflowerblue", color = "black") + #, size = 2) +
+  geom_vline(xintercept = as.numeric(winter_start), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end), 
+             col = "darkred", size = 1, linetype = 2) +
+  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
+  scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
+  annotate("text", 
+           x = as.POSIXct(inter1@start + as.duration(inter1) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2@start + as.duration(inter2) / 2),
+           y = 35, label = "Summer", size = 7) +
+  labs(x = "", 
+       y = "Number of Cameras",
+       title = "Cumulative number of ABMI cameras operating throughout the 2018 field season.") +
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 13, face = "bold"))
+
+plot6
+
+```
+
+Finally, Figure \@ref(fig:dep-days) showing the distribution in the number of days that the cameras are operating. 
+
+```{r dep-days, fig.cap="Distribution in number of operating days by ABMI deployments in 2018."}
+
+# Histogram showing the distribution in the number of days that the cameras are operating.
+
+plot7 <- df_tbd_summary %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  filter(Year == "2018",
+         str_detect(Deployment, "ABMI")) %>%
+  ggplot(mapping = aes(x = total)) +
+  geom_histogram(fill = "cornflowerblue", color = "black") +
+  labs(x = "Number of Operating Days",
+       y = "Number of cameras",
+       title = "Distribution in number of operating days.") +
+  scale_y_continuous(breaks = seq(0, 150, by = 25)) +
+  scale_x_continuous(breaks = c(0,50,100,150,200,250,300)) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 13, face = "bold"),
+        axis.text = element_text(size = 11))
+  
+plot7
+
+```
+
+# Effective detection distances of cameras
+
+One option to define the area surveyed by cameras is to define a fixed maximum distance, using a pole or other marker at 5m or 10m or whatever is appropriate.  Animals beyond that distance are not counted.  The assumption, which should be tested, is that all target species are detected if they are within that distance.  The downside of this simple approach is that it excludes data from animals detected in the potentially long tail of greater distances where they are partially detectable.
+
+ABMI uses all images (unlimited distance), with a procedure to estimate the effective detection distance of cameras. “**Effective detection distance**” is the fixed distance that would give the same number of detections as observed if all animals up to that distance were perfectly detectable and none were detectable further away. This approach is used for any point counts or transects with unlimited distances or with distance bands beyond the distance of perfect detectability. In the ABMI protocol, we place a prominently coloured pole 5m from the camera. All native mammals are recorded as being closer than the pole or farther than the pole, with additional categories for animals that are uncertain (near 5m but not directly in line with the pole), investigating the pole or investigating the camera. Simple geometry gives the effective detection distance from the proportion of locations that are <5m away versus >5m (excluding the uncertain and investigating images): 
+
+$$EDD~(m) = \frac{5}{sqrt(1-p_{>5m})}$$ 
+where $$p_{>5m}$$ is the proportion of images with the species greater than 5-m away.  
+
+The area surveyed by a camera is:
+
+$$Surveyed~Area~(m^2)~=~\frac{(π~*~EDD^2~*~angle)}{360}$$ 
+
+where angle is the angle of the camera’s field-of-view in degrees (42° for the Reconyx cameras that ABMI uses). This parameter has been set in the code chunk at the beginning of the document, and can be easily changed if new cameras are adopted.
+
+First we prepare the data we will use to develop the effective detection distance models. We use the subset of the data that has had animals in images manually tagged as either at, behind, or in front of the pole (`distance` variable in `df_native_all`). We also limit the data to non-lured deployments.   
+
+```{r}
+
+df_distance_all <- df_native_all %>%
+  # Clean up "NAs" (confusing) - replace with "X"
+  mutate(distance = str_replace_all(distance, "NA", "X"),
+         distance = str_replace_all(distance, "NA, NA", "X, X"),
+         distance = str_replace_all(distance, "NA, NA, NA", "X, X, X")) %>%
+  # Make columns of number of individuals at each pole position
+  mutate(PoleAt = str_count(distance, "A"),
+         PoleBehind = str_count(distance, "B"),
+         PoleFront = str_count(distance, "F"),
+         PoleIC = str_count(distance, "IC"),
+         PoleIP = str_count(distance, "IP"),
+         PoleNA = str_count(distance, "X")) %>%
+  select(deployment:common_name, sex, age_class, number_individuals, distance:PoleNA) %>%
+  filter(!is.na(distance)) %>%
+  # Join in lure information
+  left_join(df_cam_lure, by = c("deployment", "Year" = "year")) %>%
+  # Create variable for Julian date
+  mutate(Julian = as.numeric(format(ymd_hms(date_time_taken), "%j"))) %>%
+  # Filter out lured deployments - only use unlured for detection distance models.
+  filter(Lure == "n")
+
+df_distance_veghf <- df_veghf_detdist %>%
+  select(deployment, year, DeploymentYear, VegForDetectionDistance) %>%
+  # Get rid of WetShrub - not used for modeling.
+  mutate(VegHF = ifelse(VegForDetectionDistance == "WetShrub", 
+                        "Shrub", VegForDetectionDistance)) %>%
+  select(-VegForDetectionDistance) %>%
+  # Join distance information.
+  right_join(df_distance_all, by = c("deployment", "year" = "Year")) %>%
+  mutate(date_time_taken = ymd_hms(date_time_taken)) %>%
+  left_join(df_dist_groups, by = "common_name")
+
+```
+
+Detection distances are expected to differ for different species, by habitat types and possibly by season (e.g., on snowpacks versus in summer shrubs). We therefore used the results to develop detection-distance models for eleven species groups and eight broad habitat types: deciduous forest, upland conifer forest, upland grass, shrub, lowland forest, wet grass, water and human footprint.  BIC-based model selection examined seven models with those habitat types grouped into broader categories, and seven more that added a factor for season (winter = October 15 – April 14, summer = April 15 – October 14).
+
+First, we create the combined habitat types, which will be tried in the models.
+
+```{r}
+
+# Probably best placed in another pre-processing script, too much clutter for this document.
+
+df_distance_veghf$VegHF1<-"Wet"
+df_distance_veghf$VegHF1<-ifelse(df_distance_veghf$VegHF=="Conif" | df_distance_veghf$VegHF=="Decid", "ConifDecid", df_distance_veghf$VegHF1)
+df_distance_veghf$VegHF1<-ifelse(df_distance_veghf$VegHF=="Grass" | df_distance_veghf$VegHF=="Shrub", "GrassShrub", df_distance_veghf$VegHF1)
+df_distance_veghf$VegHF1<-ifelse(df_distance_veghf$VegHF=="HF","HF",df_distance_veghf$VegHF1)
+
+df_distance_veghf$VegHF2<-"GrassWater"
+df_distance_veghf$VegHF2<-ifelse(df_distance_veghf$VegHF=="Conif" | df_distance_veghf$VegHF=="Decid" | df_distance_veghf$VegHF=="WetTreed","Treed",df_distance_veghf$VegHF2)
+df_distance_veghf$VegHF2<-ifelse(df_distance_veghf$VegHF=="Shrub","Shrub",df_distance_veghf$VegHF2)
+df_distance_veghf$VegHF2<-ifelse(df_distance_veghf$VegHF=="HF","HF",df_distance_veghf$VegHF2)
+
+df_distance_veghf$VegHF3<-"Wet"
+df_distance_veghf$VegHF3<-ifelse(df_distance_veghf$VegHF=="Conif" | df_distance_veghf$VegHF=="Decid","ConifDecid",df_distance_veghf$VegHF3)
+df_distance_veghf$VegHF3<-ifelse(df_distance_veghf$VegHF=="Grass" | df_distance_veghf$VegHF=="Shrub" | df_distance_veghf$VegHF=="HF","GrassShrubHF",df_distance_veghf$VegHF3)
+
+df_distance_veghf$VegHF4<-"GrassWaterHF"
+df_distance_veghf$VegHF4<-ifelse(df_distance_veghf$VegHF=="Conif" | df_distance_veghf$VegHF=="Decid" | df_distance_veghf$VegHF=="WetTreed","Treed",df_distance_veghf$VegHF4)
+df_distance_veghf$VegHF4<-ifelse(df_distance_veghf$VegHF=="Shrub","Shrub",df_distance_veghf$VegHF4)
+
+df_distance_veghf$VegHF5<-"GrassWaterShrubHF"
+df_distance_veghf$VegHF5<-ifelse(df_distance_veghf$VegHF=="Conif" | df_distance_veghf$VegHF=="Decid" | df_distance_veghf$VegHF=="WetTreed","Treed",df_distance_veghf$VegHF5)
+
+```
+
+Next, we develop the detection distance models. 
+
+```{r include=FALSE, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+
+# This might be something to have elsewhere.
+
+library(mgcv)
+
+df_det_dist <- df_distance_veghf %>%
+  # Sum total individuals in each of PoleAt through PoleIP
+  mutate(n = rowSums(select(., PoleAt:PoleNA))) %>%
+  filter(!is.na(VegHF)) %>%
+  # Only use records where number_individuals = PoleBehind or PoleFront
+  filter(n == PoleBehind | n == PoleFront) %>%
+  # Create season variable based on julian day
+  mutate(Season = as.factor(ifelse(Julian >= summer.start.j & Julian <= summer.end.j, "Summer", "Winter")),
+         pBehind = PoleBehind / n) %>%
+  select(deployment, year, VegHF, VegHF1:VegHF5, common_name, dist_group, n, pBehind, Season)
+
+mod_detdist <- df_det_dist %>%
+  # Get rid of Pronghorn and Bighorn Sheep (for now)
+  filter(dist_group != "Pronghorn",
+         dist_group != "Bighorn sheep") %>%
+  group_by(dist_group) %>%
+  nest() %>%
+  mutate(m1 = map(.x = data, .f = ~ gam(formula = pBehind ~ 1, weights = n, data = .x, family = "binomial")),
+         m2 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF, weights = n, data = .x, family = "binomial")),
+         m3 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF1, weights = n, data = .x, family = "binomial")),
+         m4 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF2, weights = n, data = .x, family = "binomial")),
+         m5 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF3, weights = n, data = .x, family = "binomial")),
+         m6 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF4, weights = n, data = .x, family = "binomial")),
+         m7 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF5, weights = n, data = .x, family = "binomial")),
+         m8 = map(.x = data, .f = ~ gam(formula = pBehind ~ Season, weights = n, data = .x, family = "binomial")),
+         m9 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF + Season, weights = n, data = .x, family = "binomial")),
+         m10 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF1 + Season, weights = n, data = .x, family = "binomial")),
+         m11 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF2 + Season, weights = n, data = .x, family = "binomial")),
+         m12 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF3 + Season, weights = n, data = .x, family = "binomial")),
+         m13 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF4 + Season, weights = n, data = .x, family = "binomial")),
+         m14 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF5 + Season, weights = n, data = .x, family = "binomial")))
+
+# Calculate BIC to determine best model for each species distance group
+mod_detdist_bicwt <- mod_detdist %>%
+  mutate(bic.ta = pmap(list(m1,m2,m3,m4,m5,m6,m7,m8,m9,m10,m11,m12,m13,m14), .f = BIC)) %>%
+  select(dist_group, data, bic.ta) %>%
+  mutate(bic.delta = map(.x = bic.ta, .f = ~ .$BIC - min(.$BIC))) %>%
+  mutate(bic.exp = map(.x = bic.delta, .f = ~ exp((-1/2) * .x))) %>%
+  mutate(bic.wt = map(.x = bic.exp, .f = ~ .x / sum(.x))) %>%
+  mutate(best_model = map_dbl(.x = bic.wt, .f = ~ which.max(.x))) %>%
+  select(dist_group, best_model)
+
+# Data to use in the predictions - all deployments w/ all VegHF and Seasons. 
+df_dep_veghf_dist <- df_veghf_detdist %>%
+  # WetShrub not used in modeling.
+  mutate(VegHF = ifelse(VegForDetectionDistance == "WetShrub", "Shrub", VegForDetectionDistance)) %>%
+  left_join(df_veg_lookup, by = "VegHF") %>%
+  select(DeploymentYear, VegHF, VegHF1:VegHF5) %>%
+  # Include both summer and winter options for each deployment
+  crossing(Season = c("Summer", "Winter"))
+
+my_function <- function(x) {
+  pluck(x, 1, "xlevels")
+}
+
+pred_detdist <- mod_detdist %>%
+  # Join BIC weight to indicate best model
+  left_join(mod_detdist_bicwt, by = "dist_group") %>%
+  select(dist_group, m4, m5) %>%
+  # Make predictions (use case_when to decide on which model to use)
+  #mutate(hab.list = map(.x = m4, ~ .x["xlevels"][[1]])) %>%
+  # select(dist_group, hab.list)
+  mutate(hab = pmap(list(m5, m4), .f = ~ pluck[.x, ["xlevels"][[1]])) %>%
+  select(dist_group, hab)
+  
+  
+  mutate(hab.list = map(.x = case_when(
+    best_model == 1 ~ m1,
+    best_model == 2 ~ m2,
+    best_model == 3 ~ m3,
+    best_model == 4 ~ m4,
+    best_model == 5 ~ m5,
+    best_model == 6 ~ m6,
+    best_model == 7 ~ m7,
+    best_model == 8 ~ m8,
+    best_model == 9 ~ m9,
+    best_model == 10 ~ m10,
+    best_model == 11 ~ m11,
+    best_model == 12 ~ m12,
+    best_model == 13 ~ m13,
+    best_model == 14 ~ m14), 
+    ~ as.character(.x[[1]]["xlevels"])))
+
+
+
+
+SpTable <- unique(df_dist_groups$dist_group)
+
+# Detection distance models:
+
+for (sp in 1:length(SpTable)) {
+
+  print(paste(sp,length(SpTable),SpTable[sp],date()))
+
+  d.sp <- df_det_dist[df_det_dist$SpGroup == SpTable[sp],]
+
+  # Number of informative trials for that record.
+  d.sp$n <- d.sp$PoleFront + d.sp$PoleBehind
+
+  d.sp$pBehind<-d.sp$PoleBehind / d.sp$n
+
+  m<-list(NULL)
+  m[[1]]<-try(gam(pBehind ~ 1, weights = d.sp$n, data=d.sp, family="binomial"))
+  
+  if (SpTable[sp]!="Pronghorn" & SpTable[sp]!="Bighorn sheep") {
+    
+    m[[2]] <- try(gam(pBehind ~ as.factor(VegHF), weights = d.sp$n, data = d.sp, family="binomial"))
+    m[[3]] <- try(gam(pBehind ~ as.factor(VegHF1), weights = d.sp$n, data = d.sp, family="binomial"))
+    m[[4]] <- try(gam(pBehind ~ as.factor(VegHF2), weights = d.sp$n, data = d.sp, family="binomial"))
+    m[[5]] <- try(gam(pBehind ~ as.factor(VegHF3), weights = d.sp$n, data = d.sp, family="binomial"))
+    m[[6]] <- try(gam(pBehind ~ as.factor(VegHF4), weights = d.sp$n, data = d.sp, family="binomial"))
+    m[[7]] <- try(gam(pBehind ~ as.factor(VegHF5), weights = d.sp$n, data = d.sp, family="binomial"))
+
+    m[[8]] <- try(gam(pBehind ~ Season, weights = d.sp$n, data = d.sp, family="binomial"))
+
+    m[[9]] <- try(gam(pBehind ~ as.factor(VegHF) + as.factor(Season), weights = d.sp$n, data=d.sp, family = "binomial"))
+    m[[10]] <- try(gam(pBehind ~ as.factor(VegHF1) + as.factor(Season), weights = d.sp$n, data = d.sp, family = "binomial"))
+    m[[11]] <- try(gam(pBehind ~ as.factor(VegHF2) + as.factor(Season), weights = d.sp$n, data = d.sp, family = "binomial"))
+    m[[12]] <- try(gam(pBehind ~ as.factor(VegHF3) + as.factor(Season), weights = d.sp$n, data = d.sp, family = "binomial"))
+    m[[13]] <- try(gam(pBehind ~ as.factor(VegHF4) + as.factor(Season), weights = d.sp$n, data = d.sp, family = "binomial"))
+    m[[14]] <- try(gam(pBehind ~ as.factor(VegHF5) + as.factor(Season), weights = d.sp$n, data = d.sp, family = "binomial"))
+  }
+
+  nModels<-length(m)
+
+  # Additional modification to not count models where the minimum number of pole positions in a veg-HF type is <20
+  min.n <- c(min(by(d.sp$n, d.sp$VegHF, sum)),
+           min(by(d.sp$n, d.sp$VegHF1, sum)),
+           min(by(d.sp$n, d.sp$VegHF2, sum)),
+           min(by(d.sp$n, d.sp$VegHF3, sum)),
+           min(by(d.sp$n, d.sp$VegHF4, sum)),
+           min(by(d.sp$n, d.sp$VegHF5, sum)))
+  min.n <- ifelse(is.na(min.n), 0, min.n)
+
+  # BIC calculation
+  bic.ta<-rep(999999999,(nModels))
+  for (i in 1:(nModels)) {
+    if (!is.null(m[[i]]) & class(m[[i]])[1] != "try-error") {  # last part is to not used non-converged models, unless none converged
+      bic.ta[i]<-BIC(m[[i]])
+    }
+  }
+
+  if (SpTable[sp] != "Pronghorn" & SpTable[sp] != "Bighorn sheep") {
+    bic.ta[c(2:7)]<-bic.ta[c(2:7)]+(min.n<20)*999999999  # Inflate BIC if <20 records in any one vegHF type
+    
+    bic.ta[c(9:14)]<-bic.ta[c(9:14)]+(min.n<20)*999999999  # Inflate BIC if <20 records in any one vegHF type
+  }
+
+  # Too few winter data to fit these species properly
+  if (SpTable[sp]=="Bear" | SpTable[sp]=="Bighorn sheep" | SpTable[sp]=="Elk (wapiti)") bic.ta[8:14]<-999999999  
+  
+  bic.delta <- bic.ta - min(bic.ta)
+  bic.exp <- exp(-1/2 * bic.delta)
+  bic.wt <- bic.exp / sum(bic.exp)
+  best.model < -which.max(bic.wt)
+
+  # Figures predicting for each veg type and season
+  hab.list<-levels(as.factor(d.sp$VegHF))
+  v.l1<-df_pole_veg_lookup[df_pole_veg_lookup$VegHF %in% hab.list,]
+  if (sum(d.sp$VegHF=="Water")==0) v.l1[7,1]<-"WetGrass"  # For species that have no data in water
+  
+  p.veg<-array(0,c(length(hab.list),nModels))  # veg+HF types, for each model
+  
+  p.season<-array(0,c(2,nModels))  # Two seasons
+  
+  p.veg[,1] <- p.season[,1] <- mean(predict(m[[1]]))  # Null model
+
+  if (SpTable[sp]!="Pronghorn" & SpTable[sp]!="Bighorn sheep") {
+    for (i in 2:nModels) {
+      if(class(m[[i]])[1]!="try-error" & bic.wt[i]>0.001 ) {
+        p.veg[,i]<-predict(m[[i]],newdata=data.frame(v.l1,Season="Summer"))
+        p.season[,i]<-predict(m[[i]],newdata=data.frame(v.l1[1,],Season=c("Summer","Winter")))
+      }
+    }
+    p1.veg<-colSums(bic.wt*t(p.veg))
+    p1.season<-colSums(bic.wt*t(p.season))
+  } else {
+    p1.veg<-t(p.veg)
+    p1.season<-p.season
+  }
+
+  dist.veg<-5/sqrt(1-plogis(p1.veg)) # Time-between-images effect would be added in here, but no meaningful differences found
+  
+  dist.season<-5/sqrt(1-plogis(p1.season))  # Time-between-images effect would be added in here, but no meaningful differences found
+  
+  dist.veg<-ifelse(dist.veg>20,20,dist.veg)  # Can be inf when all locations are behind pole
+  
+  dist.season<-ifelse(dist.season>20,20,dist.season)  # Can be inf when all locations are behind pole
+  
+  ymax<-ifelse(max(c(dist.veg,dist.season))>10,20,10)
+  
+  hab.n<-by(d.sp$n,d.sp$VegHF,sum)
+  
+  fname<-paste0(abmisc,"processed/Detection_Distance/Detection distance ",SpTable[sp],".jpg",sep="")
+  
+  jpeg(width=500,height=900,file=fname)
+  
+  par(mfrow=c(2,1),mai=c(1.8,0.8,0.3,0.3))
+  # Figures - veg types
+  x1<-barplot(dist.veg,ylim=c(0,ymax),xlab="",ylab="Effective distance (m)",cex.axis=1.3,cex.lab=1.4)
+  mtext(side=1,at=x1,hab.list,las=2,line=1,cex=1.3)
+  box(bty="l")
+  text(x1[1],ymax*0.96,SpTable[sp],cex=1.5,adj=0)
+  text(x1,rep(ymax*0.89,length(x1)),hab.n[match(v.l1$VegHF,names(hab.n))],cex=1.1)
+  # Figures - season
+  par(mai=c(1,1.8,0.1,1.3))
+  x1<-barplot(dist.season,ylim=c(0,ymax),xlab="",ylab="Effective distance (m)",cex.axis=1.3,cex.lab=1.4)
+  mtext(side=1,at=x1,c("Summer","Winter"),las=1,line=1,cex=1.3)
+  box(bty="l")
+  graphics.off()
+
+  # Save models and bic wt
+  fname<-paste0(abmisc,"processed/detection_distance/individual_species/Detection distance models ",SpTable[sp],".rdata",sep="")
+  save(file = fname, m, bic.wt, hab.list)
+
+}  # Next SpGroup
+
+```
+
+Let's take a look at the results:
+
+```{r include=FALSE, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+
+# Bears
+
+load(paste0(abmisc, "processed/detection_distance/individual_species/Detection distance models Bear.rdata"))
+
+
+```
+
+# Lure Effects
+
+## Series summary of lured vs. unlured:
+
+```{r}
+
+df_series_lure <- df_cam_lure %>%
+  # Join to series information
+  right_join(df_series_4, by = c("deployment", "year")) %>%
+  ungroup() %>%
+  # Don't use off-grids, wetlands, or non-ABMI projects
+  filter(str_detect(deployment, "^ABMI"),
+         !str_detect(deployment, "^ABMI-W"),
+         !is.na(Lure),
+         # Only from 2015 onwards
+         year >= 2015)
+
+# Include deployment w/o images of native mammals:
+df_cam_lure_1 <- df_cam_lure %>%
+  filter(str_detect(deployment, "^ABMI"),
+         !str_detect(deployment, "^ABMI-W"),
+         year >= 2015,
+         !is.na(Lure)) %>%
+  # To isolate qualifying deployments without native mammals
+  anti_join(df_series_lure, by = c("deployment", "year")) %>%
+  select(deployment, year, Lure) %>%
+  distinct() %>%
+  group_by(year, Lure) %>%
+  tally() %>%
+  ungroup()
+
+df_lure_summary <- df_series_lure %>%
+  ungroup() %>%
+  select(deployment, year, Lure) %>%
+  distinct() %>%
+  group_by(year, Lure) %>%
+  tally() %>%
+  ungroup() %>%
+  left_join(df_cam_lure_1, by = c("year", "Lure")) %>%
+  mutate(total_deploy = n.x + n.y) %>%
+  select(year, Lure, total_deploy) %>%
+  arrange(Lure, year)
+
+df_series_lure <- df_series_lure %>%
+  left_join(df_lure_summary, by = c("year", "Lure"))
+
+df_lure_effects <- df_series_lure %>%
+  group_by(common_name, year, Lure) %>%
+  summarise(sum_dur = sum(series_total_time),
+            num_series = length(series_total_time)) %>%
+  left_join(df_lure_summary, by = c("year", "Lure")) %>%
+  mutate(mean_dur = sum_dur / total_deploy,
+         mean_rec = num_series / total_deploy,
+         mean_dur_per_rec = mean_dur / mean_rec)
+
+```
+
+Make some plots:
+
+```{r}
+
+# Figure out some visualizations for this. 
+
+```
+
+# Calculate Effective Detection Distances
+
+We want detection distances by species group x deployment x season x veghf type, based on the models we built previously.
+
+"Effective detection distance" is the fixed distance that would give the same number of detections as observed if all animals up to that distance were perfectly detectable and none were detectable further away. 
+
+```{r include=FALSE, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+
+# Data to use in the predictions. 
+df_dep_veghf_dist <- df_veghf_detdist %>%
+  # WetShrub not used in modeling.
+  mutate(VegHF = ifelse(VegForDetectionDistance == "WetShrub", "Shrub", VegForDetectionDistance)) %>%
+  left_join(df_veg_lookup, by = "VegHF") %>%
+  select(DeploymentYear, VegHF, VegHF1:VegHF5) %>%
+  crossing(Season = c("Summer", "Winter"))
+
+# Species distance groups -> To be updated if more modeling groups are added.
+SpTable<-c("Bear","BigForestCarnivores","BigForestUngulates","CoyoteFox",
+           "Elk (wapiti)","Lynx","Mule deer","SmallForest","SmallOpen","WTDeer")
+
+pred.season<-c("Summer","Winter")
+
+site.list<-unique(df_dep_veghf_dist$DeploymentYear)
+
+# Path to individual species detection distance models created above:
+fname.models <- paste0(abmisc,"processed/detection_distance/individual_species/Detection distance models ")
+
+dd<-dd.lci<-dd.uci<-array(NA,c(length(site.list),length(SpTable),2))
+
+for (sp in 1:length(SpTable)) {  
+  fname <- paste(fname.models,SpTable[sp],".rdata",sep="")
+  load(fname)  # Model m, bic.wt
+  hab.list<-as.character(m[[2]]$xlevels[[1]])  # The shared subset of habitat types in both VegHF models
+  s1<- s # Missing data for some veg types for some species, so need to collapse vegHF types in s
+  s1$VegHF<-as.character(s1$VegHF)
+  s1$VegHF1<-as.character(s1$VegHF1)
+  s1$VegHF2<-as.character(s1$VegHF2)
+  s1$VegHF3<-as.character(s1$VegHF3)
+  s1$VegHF4<-as.character(s1$VegHF4)
+  # Substitutions for when a habitat type does not show up in a species' model.
+  # Need to revise these by trial and error each year.
+  if (("Water" %in% hab.list)==FALSE) s1$VegHF<-ifelse(s1$VegHF=="Water","WetGrass",s1$VegHF)
+  if (("WetTreed" %in% hab.list)==FALSE) s1$VegHF<-ifelse(s1$VegHF=="WetTreed","WetGrass",s1$VegHF)
+  if (("WetGrass" %in% hab.list)==FALSE) s1$VegHF<-ifelse(s1$VegHF=="WetGrass","Grass",s1$VegHF)
+  if (("Grass" %in% hab.list)==FALSE) s1$VegHF<-ifelse(s1$VegHF=="Grass","WetGrass",s1$VegHF)
+  if (("Shrub" %in% hab.list)==FALSE) {
+    s1$VegHF<-ifelse(s1$VegHF=="Shrub","Grass",s1$VegHF)
+    s1$VegHF2<-ifelse(s1$VegHF2=="Shrub","GrassWater",s1$VegHF2)
+    s1$VegHF4<-ifelse(s1$VegHF4=="Shrub","GrassWaterHF",s1$VegHF4)
+  }
+  if ("wet" %in% m[[10]]$xlevels==FALSE) {
+    s1$VegHF1<-ifelse(s1$VegHF1=="Wet","GrassShrub",s1$VegHF1)
+    s1$VegHF3<-ifelse(s1$VegHF3=="Wet","GrassShrubHF",s1$VegHF3)
+  }
+  for (j in 1:2) {  # Predictions for the two seasons
+    p<-p.se<-array(0,c(length(m),length(site.list)))
+    p1<-predict(m[[1]],se.fit=TRUE)
+    p[1,]<-rep(p1$fit[1],length(site.list))
+    p.se[1,]<-rep(p1$se.fit[1],length(site.list))
+    for (k in 2:length(m)) {
+      p1<-predict(m[[k]],newdata=data.frame(s1[,c("VegHF","VegHF1","VegHF2","VegHF3","VegHF4","VegHF5")],Season=pred.season[j]),se.fit=TRUE)
+      # The SE produces CI's on the detection distance, but not currently used (would be used if we did full CI's on estimates)
+      p[k,]<-p[k,]+p1$fit
+      p.se[k,]<-p.se[k,]+p1$se.fit
+    }
+    p.all<-colSums(p*bic.wt)  # BIC weighted average
+    p.se.all<-colSums(bic.wt*sqrt(p.se^2+(p-rep(p.all,each=length(m)))^2))
+    
+    # Convert probability of being behind 5m pole into effective detection distance
+    dd[,sp,j]<-5/sqrt(1-plogis(p.all))
+    dd.lci[,sp,j]<-5/sqrt(1-plogis(p.all-2*p.se.all))
+    dd.uci[,sp,j]<-5/sqrt(1-plogis(p.all+2*p.se.all))
+  }  # Next time period j
+}
+
+dimnames(dd)[[1]]<-dimnames(dd.lci)[[1]]<-dimnames(dd.uci)[[1]]<-site.list
+dimnames(dd)[[2]]<-dimnames(dd.lci)[[2]]<-dimnames(dd.uci)[[2]]<-SpTable
+dimnames(dd)[[3]]<-dimnames(dd.lci)[[3]]<-dimnames(dd.uci)[[3]]<-pred.season
+
+# Separate predictions for pronghorn and bighorn, because only have null model
+
+SpTable1 <- c("Pronghorn", "Bighorn sheep")
+
+dd1<-dd.lci1<-dd.uci1<-array(NA,c(length(site.list),length(SpTable1),2))
+
+for (sp in 1:length(SpTable1)) {
+  fname<-paste(fname.models,SpTable1[sp],".rdata",sep="")
+  load(fname)  # Model m, bic.wt, hab.list
+  s1<-df_dep_veghf_dist  # Missing data for some veg types for some species, so need to collapse vegHF types in s
+  for (j in 1:2) {
+    p1<-predict(m[[1]],se.fit=TRUE)  # Only null model
+    dd1[,sp,j]<-rep(5/sqrt(1-plogis(p1$fit[1])),length(site.list))  # Only null model
+    dd.lci1[,sp,j]<-rep(5/sqrt(1-plogis(p1$fit[1]-2*p1$se.fit[1])),length(site.list))  # Only null model
+    dd.uci1[,sp,j]<-rep(5/sqrt(1-plogis(p1$fit[1]+2*p1$se.fit[1])),length(site.list))  # Only null model
+  }  # Next time period j
+}  # Next of these two species
+
+dimnames(dd1)[[1]]<-dimnames(dd.lci1)[[1]]<-dimnames(dd.uci1)[[1]]<-site.list
+dimnames(dd1)[[2]]<-dimnames(dd.lci1)[[2]]<-dimnames(dd.uci1)[[2]]<-SpTable1
+dimnames(dd1)[[3]]<-dimnames(dd.lci1)[[3]]<-dimnames(dd.uci1)[[3]]<-pred.season
+
+save(dd, dd.lci, dd.uci, SpTable, site.list, dd1, dd.lci1, dd.uci1, 
+     file = paste0(abmisc,"processed/detection_distance/predictions/Detection distances by site species and season.rdata"))
+
+```
+
+# Append EDD information to series data
+
+First, tidy things up:
+
+```{r}
+
+df_cam_lure <- df_cam_lure %>%
+  mutate(DeploymentYear = paste(deployment, year, sep = "_"))
+
+# Calculate total duration spent on camera by deployment, year, and species:
+df_series_5 <- df_series_4 %>%
+  ungroup() %>%
+  # Calculate Julian day and season of each series
+  mutate(julian = as.numeric(format(date_time_taken, "%j")),
+         season = ifelse(julian >= summer.start.j & julian <= summer.end.j,
+                         "Summer",
+                         "Winter")) %>%
+  mutate_at(c("DeploymentYear", "common_name", "season"), factor) %>%
+  # Important to add .drop = F argument in group_by so all combinations are preserved.
+  group_by(DeploymentYear, common_name, season, .drop = FALSE) %>%
+  summarise(total_duration = sum(series_total_time)) %>%
+  ungroup() %>%
+  mutate_if(is.factor, as.character) %>%
+  # Join operating days and lure status
+  left_join(df_tbd_summary, by = "DeploymentYear") %>%
+  left_join(df_cam_lure, by = "DeploymentYear")
+  # ^Note: Missing info from deployments w/o any images of native mammals.
+
+# Character vector of all native species (43 in total)
+chr_species <- as.character(sort(unique(df_series_5$common_name)))
+
+# Add deployments w/o any images of native mammals
+df_series_nonative <- df_tbd_summary %>%
+  # Preserve only those Deployment-Years w/o images of native mammals.
+  anti_join(df_series_5, by = "DeploymentYear") %>% # 519 Deployment-Years
+  # Expand to include all combinations of DeploymentYear, Season, and Species.
+  expand(DeploymentYear, season = c("Winter", "Summer"), common_name = chr_species) %>%
+  # Join in operating days.
+  left_join(df_tbd_summary, by = "DeploymentYear") %>%
+  # Total_Duration is 0 because these species weren't seen.
+  mutate(total_duration = 0) %>%
+  # Join in lure status.
+  left_join(df_cam_lure, by = "DeploymentYear")
+
+# Bind togther the two df's of series (w/ and w/o native mammals)
+df_series_full <- df_series_5 %>%
+  bind_rows(df_series_nonative) %>%
+  arrange(DeploymentYear, common_name, season) %>%
+  # Combine total.summer and total.winter into `seasonal` (Season already specified)
+  mutate(seasonal = ifelse(season == "Summer", total.summer, total.winter)) %>%
+  select(DeploymentYear:season, total, seasonal, Lure, total_duration)
+
+```
+
+Now, we can append EDD information:
+
+```{r}
+
+# Load detection distance modeling from above
+load(paste0(abmisc,"processed/detection_distance/predictions/Detection distances by site species and season.rData"))
+
+# Detection distance for each DeploymentYear, SpeciesGroup, and Season combination, tidied.
+df_detdist <- dd %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "DeploymentYear") %>%
+  gather(key = "SpGroupSeason", value = "detdist", Bear.Summer:`Bighorn sheep.Winter`) %>%
+  mutate(SpGroupSeason = str_replace_all(SpGroupSeason, "[//(//)// ]", "")) %>%
+  # Create two new columns: Detection Distance Group and Season, sep by "."
+  separate(SpGroupSeason, into = c("detdistgroup", "season")) %>%
+  mutate(detdistgroup = str_replace(detdistgroup, "wapiti", ""))
+
+# Join detection distance information to df_series_full.
+# Now contains all the ingredients to calculate density at each deployment.
+df_dens_ing <- df_series_full %>%
+  left_join(df_dist_groups, by = "common_name") %>%
+  rename(detdistgroup = dist_group) %>%
+  mutate(detdistgroup = ifelse(detdistgroup == "Bighorn sheep", "Bighornsheep", detdistgroup),
+         detdistgroup = ifelse(detdistgroup == "Mule deer", "Muledeer", detdistgroup)) %>%
+  left_join(df_detdist, by = c("DeploymentYear", "season", "detdistgroup")) %>%
+  # ^ Missing some detdist info ... which I traced back to missing veghf info.
+  # Something to look into.
+  select(DeploymentYear, common_name, detdistgroup, season, detdist, everything())
+
+```
+
+Finally, we can calculate density:
+
+```{r}
+
+df_density <- df_dens_ing %>%
+  # Calculate effort per site, in 100-m^2 * days
+  mutate(effort = seasonal * (detdist^2 * pi * (cam_fov_ang/360)) / 100,
+  # Calculate seconds (s) of animal presence per effort
+         cpue = total_duration / effort,
+  # Convert to per km^2
+         cpue_km2 = cpue / 60 / 60 / 24 * 10000)
+
+```
+
+# Sampling distribution of species density
+
+The distributions of density estimates of species at deployments are extremely skewed, with a large majority of deployments having none of a species, some deployments having low densities (one or a few individuals passing by) while a few have very high values (one or more individuals spending long periods in front of a particular camera) (\@ref(fig:dens-est-dist)). Such distributions require large sample sizes to obtain precise estimates – for example, for yearly changes in density in a region or to use for estimating abundances in different habitat types. Ecologists’ intuitive experience with adequate sample sizes may be very misleading with these kinds of distributions. Pilot studies and formal analysis of expected precision are recommended for large projects.
+
+```{r dens-est-dist, fig.cap="Distribution of density estimates across all deployments."}
+
+plot8 <- df_density %>%
+  filter(common_name %in% df_native_top11$common_name) %>%
+  left_join(df_native_top11, by = "common_name") %>%
+  mutate(common_name = fct_reorder(factor(common_name), images, .desc = TRUE)) %>%
+  ggplot(mapping = aes(x = cpue_km2, fill = common_name)) +
+    geom_histogram(bins = 40) +
+    scale_fill_viridis_d(direction = -1) +
+    coord_cartesian(ylim = c(0,250)) +
+    #scale_y_log10() +
+    labs(x = expression(Density~(individuals~per~km^2))) +
+    facet_wrap(~ common_name, scales = "free") +
+    theme_classic() +
+    theme(legend.title = element_blank())
+
+plot8
+
+```
+
+For habitat modeling, we find that the density estimates are best treated as a compound distribution of presence/absence – modeling how the 0 records differ from the non-0 records – and of abundance where the species is present – explaining variation in abundance where the species was recorded. We model presence/absence with the typical logit-linked binomial model, and the abundance-given-presence distribution with a log-normal distribution, which fits most of the species’ distributions reasonably well (\@ref(fig:dens-agp-log)).  This compound distribution is the same as a zero-inflated log-normal distribution, but explicitly treating the two components separately allows more flexible modeling and critical examination of each component.
+
+```{r dens-agp-log, fig.cap="Distribution of log-transformed presence (non-0) densities."}
+
+plot9 <- df_density %>%
+  filter(common_name %in% df_native_top11$common_name) %>%
+  left_join(df_native_top11, by = "common_name") %>%
+  mutate(common_name = fct_reorder(factor(common_name), images, .desc = TRUE)) %>%
+  filter(cpue_km2 > 0) %>%
+  ggplot(mapping = aes(x = cpue_km2, fill = common_name)) +
+    geom_histogram(bins = 30) +
+    scale_fill_viridis_d(direction = -1) +
+    scale_x_log10() +
+    labs(x = expression(Density~(individuals~per~km^2))) +
+    facet_wrap(~ common_name, scales = "free") +
+    theme(legend.title = element_blank())
+
+plot9
+
+```
+
+
+
+
+
+
+
+
+
+
+
+

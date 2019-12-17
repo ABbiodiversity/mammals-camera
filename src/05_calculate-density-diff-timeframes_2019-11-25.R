@@ -89,7 +89,7 @@ df_series_summary <- df_series_all %>%
   filter(!season == "Other")
   # ^Note: Missing info from deployments w/o any images of native mammals. Added below.
 
-# Character vector of all native species (43 in total)
+# Character vector of all native species (41 in total)
 chr_species <- as.character(sort(unique(df_series_summary$common_name)))
 
 # Add deployments w/o any images of native mammals
@@ -173,6 +173,30 @@ df_density_wtd <- df_density %>%
 
 # Write csv file
 write_csv(df_density_wtd, paste0(public_tomel, "density_wtd_abmicmu_2016-18.csv"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

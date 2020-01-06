@@ -17,3 +17,6 @@ here
 DT
 scales
 sf
+leaflet
+leaflet.extras
+crosstalk

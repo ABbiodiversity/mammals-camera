@@ -5,7 +5,7 @@ date: "October 15, 2019"
 output:
   bookdown::html_document2:
     highlight: tango
-    number_sections: yes
+    number_sections: no
     self_contained: yes
     theme: sandstone
     toc: yes
@@ -95,10 +95,13 @@ df_veghf_detdist <- read_csv(paste0(abmisc,"lookup/camera-soilveghf-detdist-all.
 # Veg-HF categories for detection distance models:
 df_veg_lookup <- read_csv(paste0(abmisc,"lookup/veg-pole-distance.csv"))
 
-# Spatial data
-sf_nr <- st_read(paste0(abmisc,"base/spatial/ab_naturalregions.shp"), quiet = TRUE, stringsAsFactors = FALSE)
-sf_ab <- st_read(paste0(abmisc,"base/spatial/ab_prov.shp"), quiet = TRUE, stringsAsFactors = FALSE)
-abmi_dep <- st_read(paste0(abmisc,"base/spatial/abmi_deployments_public.shp"), quiet = TRUE, stringsAsFactors = FALSE)
+# Spatial data for interactive maps
+sf_nr <- st_read(paste0(abmisc,"base/spatial/ab_naturalregions.shp"), 
+                 quiet = TRUE, stringsAsFactors = FALSE)
+sf_ab <- st_read(paste0(abmisc,"base/spatial/ab_prov.shp"), 
+                 quiet = TRUE, stringsAsFactors = FALSE)
+abmi_dep <- st_read(paste0(abmisc,"base/spatial/abmi_deployments_public.shp"), 
+                    quiet = TRUE, stringsAsFactors = FALSE)
 
 ```
 
@@ -204,6 +207,7 @@ We summarise the number of images captured by species (common name) between 2013
 
 ```{r images, fig.cap="Total images captured to-date (2013-2018).", fig.align="center"}
 
+# Retrieve the 11 most common species by image count
 df_native_top11 <- df_native_all %>%
   filter(!common_name == "Deer") %>%
   group_by(common_name) %>%
@@ -232,9 +236,11 @@ plot1
 
 ```
 
+<br>
+
 White-tailed and Mule deer account for a large percentage of images taken to-date by remote cameras, following by moose, elk, and black bear. 
 
-Below we plot the number of images taken of each species by year (the top 11). 
+Next, we plot the number of images taken of each these species by year (Figure \@ref(fig:images_year)). 
 
 ```{r images_year, fig.cap="Number of images taken of each species from 2015-2018", fig.align="center"}
 
@@ -262,18 +268,21 @@ plot2
 
 ```
 
-Here is a map of occurrences.
+<br>
 
-```{r}
+Finally, we can display the occurrences of each of these species at each ABMI site. For the purposes of this map (Figure \@ref(fig:occurrences)), the four camera deployments at each site are grouped together; i.e. if a species was detected at one of the four cameras, the map will display an occurrence at the site. 
 
+```{r, echo=FALSE}
+
+# Prepare natural region layer
 sf_nr <- sf_nr %>%
   st_transform("+init=epsg:4326") %>%
   mutate(NRNAME = factor(NRNAME, 
                          levels = c("Rocky Mountain", "Parkland", "Grassland", 
                                     "Foothills", "Canadian Shield", "Boreal")))
-
 # Occurrence information
 
+# Expand ABMI deployments layer by species (common name)
 abmi_dep_1 <- abmi_dep %>%
   select(-Site_Name) %>%
   distinct(.keep_all = TRUE) %>%
@@ -294,7 +303,7 @@ df_occurrence <- df_native_all %>%
   rename(long = Public_Lon, lat = Public_Lat) %>%
   filter(Year >= "2015")
 
-# Create palettes for map
+# Create palettes for map - presence/absence and natural regions
 pal1 <- colorFactor(palette = c("maroon", "grey20"),
                     domain = df_occurrence$present)
 
@@ -302,7 +311,7 @@ pal2 <- colorFactor(palette = c("#ffd88a", "#f7b768", "#bf6549",
                                 "#cc9a1d", "#bdb86c", "#8fc294"),
                     domain = sf_nr$NRNAME)
 
-# Create SharedData object for crosstalk
+# Create SharedData object for crosstalk interactivity
 shared_ss <- SharedData$new(df_occurrence)
 
 # Create leaflet map
@@ -332,7 +341,10 @@ map1 <- sf_ab %>%
   # Add legend
   
   addLegend(data = shared_ss, pal = pal1, values = ~present,
-            position = "bottomright", opacity = 1, title = "Occurrence") %>% 
+            position = "bottomright", opacity = 1, title = "Occurrence") %>%
+  
+  addLegend(data = sf_nr, pal = pal2, values = ~NRNAME, position = "bottomleft",
+            opacity = 1, title = "Natural Region", group = "Natural Regions") %>%
 
   
   # Add layers control
@@ -345,24 +357,28 @@ map1 <- sf_ab %>%
 ```
 
 
-```{r echo=FALSE}
+```{r occurrences, echo=FALSE, fig.align="center", fig.cap="Occurrences of 11 common species at ABMI sampling sites from 2015-18.", out.width="100%", fig.height=9}
 
 # Create interactive filters
-bscols(widths = c(6, 6),
-       filter_select("common_name", "Species", shared_ss, ~common_name, multiple = FALSE, selected = "Moose"),
-       filter_checkbox("Year", "Year", shared_ss, ~Year))
+bscols(widths = c(3, 3),
+       filter_checkbox("Year", "Year", shared_ss, ~Year),
+       filter_select("common_name", "Species", shared_ss, ~common_name, multiple = FALSE, selected = "Moose"))
+    
 
+# Display map
 map1
 
 ```
 
-# Processing data
+# Processing data {#processing}
 
 There are a number of processing steps that need to be done to develop the necessary ingredients for density estimation. 
 
 ## Identify series'
 
-This is where we package up all the individual images into what we call "series", or a collection of continuous images we assume to be of the same individual animal. A series will always involve the same deployment and species, and images are considered to be part of a series if they are less than 120 seconds apart.  
+In this step, we package up all the individual images into what we call "series", or a collection of continuous images assumed to be of the same individual animal. A series will always involve the same deployment and species, and images are considered to be part of a series if they are less than 120 seconds apart.
+
+The general procedure is to arrange the `df_native_all` dataframe by deployment, year, species, and the date-time the image was captured. From there, we create new lagged variables of each of those variables in order to identify when a new series began (i.e. an image will have a different deployment and species than the image preceding it, as well as a time difference of greater than 120 seconds). In this step we also flag gaps between images that are greater than 20 seconds but less than 120 seconds (for probabilistic models of whether the animal left, see next section). 
 
 ```{r}
 
@@ -407,40 +423,43 @@ df_series <- df_native_all %>%
 
 ## Develop models for probabilistic gaps
 
-From a pilot study, we determined that if there is a gap of <20 seconds between images of the same species at a camera, the animal is almost always still in the view (no evidence of it walking out and returning). Missing the odd time when it leaves the view for less than 20 seconds has little effect on estimates of the total time it is in the field-of-view. At the other end, if there is a gap of >120 seconds between images of the same species, this almost always represented animals leaving and then returning (i.e., the animal is seen walking out of the field-of-view, then walking back in). Gaps of 20-120 seconds are uncertain. These relatively long periods when the animal could be in the field-of-view or not are important when estimating the total durations animals are in the field-of-view, and thus density.
+From a pilot study, we determined that if there is a gap of less than 20 seconds between images of the same species at a camera, the animal is almost always still in the view (no evidence of it walking out and returning). Missing the odd time when it leaves the view for less than 20 seconds has little effect on estimates of the total time it is in the field-of-view. At the other end, if there is a gap of >120 seconds between images of the same species, this almost always represented animals leaving and then returning (i.e., the animal is seen walking out of the field-of-view, then walking back in). Gaps of 20-120 seconds are uncertain. These relatively long periods when the animal could be in the field-of-view or not are important when estimating the total durations animals are in the field-of-view, and thus density.
 
-For the 2015 ABMI images, we checked each 20-120 second gap in series of native mammals for evidence of the animal leaving and returning. For 2016 and 2017 ABMI images, we checked 20-120 second gaps only for less common species where we had low sample size from 2015. We looked at several images on either side of gaps of 20-120 seconds. In each sequence, the animal was designated as having left the field-of-view during the 20-120 second gap if there was clear evidence of it walking out of the field-of-view and then returning (or a different individual entering the field-of-view). If the animal stayed in one location within the field-of-view, or sequential images showed the animal in disconnected places (as often happens with smaller animals), the animal was assumed to have stayed.
+For the 2015 ABMI images, we checked each 20-120 second gap in series' of native mammals for evidence of the animal leaving and returning. For 2016 and 2017 ABMI images, we checked 20-120 second gaps only for less common species where we had low sample size from 2015. We looked at several images on either side of gaps of 20-120 seconds. In each sequence, the animal was designated as having left the field-of-view during the 20-120 second gap if there was clear evidence of it walking out of the field-of-view and then returning (or a different individual entering the field-of-view). If the animal stayed in one location within the field-of-view, or sequential images showed the animal in disconnected places (as often happens with smaller animals), the animal was assumed to have stayed.
 
-From `df_series` we filter for images that were flagged as requiring a gap check (`$gap_check`) and had the gaps between images manually classified in 2015 (or later years for some species or studies). Four gap classifications are possible[^2]:
+From `df_series` we filter for images that were flagged as requiring a gap check (`gap_check`) and had the gaps between images manually classified in 2015 (or later years for some species or studies). Three gap classifications are possible[^2]:
 
 [^2]: There is a fourth gap class, 'N', which is added to flag cases where a None image follows a native mammal image.  
 
-+ **L** - the animal was in the process of leaving the camera field of view;
++ **L** - the animal was in the process of leaving the camera field of view ('left');
 + **P** - the animal stayed in the field of view ('present');
-+ **U** - uncertain whether the animal stayed or left. 
++ **U** - 'uncertain' whether the animal stayed or left. 
 
-We then create a new variable, `left`, which indicates whether the animal stayed (gap class = P) or left (gap class = L or U).
+We then create a new variable, `left`, which indicates whether the animal stayed (gap_class = P) or left (gap_class = L or U).
 
-We can visualize this data in \@ref(fig:gap_raw), which displays the same common species seen before. 
+We can visualize this data in Figure \@ref(fig:gap-raw), which displays the same common species seen before. In general, observations where the animal stayed in the field of view are more closely clustered around the 20 second mark, and observations where the animal left the field of view are more evenly spread across the range of gap lengths.   
 
-```{r gap_raw, fig.cap="Plots of image gap length (s) and whether the animal stayed in the camera field of view or left."}
+```{r gap-raw, fig.cap="Plots of image gap length (s) and whether the animal stayed in the camera field of view or left.", out.width="100%"}
 
+# Create dataframe of each obs we previously flagged to check gap
 df_gapcheck <- df_series %>%
   filter(!is.na(gap_class_lag) & gap_check == "1") %>%
   select(common_name, gap_class_lag, diff_time) %>%
+  # Create new left variable - did the animal leave the field of view?
   mutate(left = ifelse(gap_class_lag == "P", 0, 1)) %>%
   select(-gap_class_lag)
 
-# Subset of species - top 11
+# Subset of species - top 11 - and reorder by number of images
 df_gapcheck_sub <- filter(df_gapcheck, common_name %in% df_native_top11$common_name) %>%
   left_join(df_native_top11, by = "common_name") %>%
   mutate(common_name = fct_reorder(factor(common_name), images, .desc = TRUE))
 
+# Create jittered scatterplot
 plot3 <- df_gapcheck_sub %>%
   mutate(left = as.factor(left)) %>%
   ggplot(mapping = aes(x = diff_time, y = left, color = common_name)) +
-  geom_jitter(height = 0.25) +
-  facet_wrap(~common_name, nrow = 5) +
+  geom_jitter(height = 0.25, size = 1) +
+  facet_wrap(~common_name, nrow = 4) +
   scale_color_viridis_d(direction = -1) +
   scale_y_discrete(labels = c("Stayed", "Left")) +
   scale_x_continuous(breaks = seq(20, 120, by = 20), limits = c(20,120)) +
@@ -455,11 +474,13 @@ plot3
 
 ```
 
-We used this data to develop models of the probability of a species leaving the field-of-view during a 20-120 second gap as a function of the gap duration. Smoothing splines were fit to the probability of leaving as a function of gap length, using a logit-linked binomial model. This was done separately for each species with enough examined gaps (\@ref(fig:gap-species-model)).  
+<br>
 
-```{r gap-species-model, fig.cap="Probability that an animal leaves the field-of-view, based on clear evidence from the images, for gaps between images of 20-120 seconds."}
+We used this data to develop models of the probability of a species leaving the field-of-view during a 20-120 second gap as a function of the gap duration. Smoothing splines were fit to the probability of leaving as a function of gap length, using a logit-linked binomial model. This was done separately for each species with enough examined gaps (\@ref(fig:gap-species-model)). In this interactive graphic, the user can double-click on any species in the legend to view its probabilistic curve in isolation.  
 
-# Develop smoothing spline models
+```{r gap-species-model, fig.cap="Probability that an animal leaves the field-of-view, based on clear evidence from the images, for gaps between images of 20-120 seconds.", out.width="100%", fig.align="center"}
+
+# Develop smoothing spline models for each species
 mod_gapcheck_sub <- df_gapcheck_sub %>%
   group_by(common_name) %>%
   nest() %>%
@@ -486,14 +507,15 @@ plot4 <- mod_gapcheck_sub %>%
   theme(legend.title = element_blank(),
         axis.title = element_text(size = 13))
 
-plot4
-
-# Interactive
-ggplotly(plot4)
+# Interactive plotly
+plot4_inter <- ggplotly(plot4) %>% layout(margin = list(t = 75))
+plot4_inter
 
 ```
 
-Examining the resulting curves and trying to keep similar species together, species were grouped into 6 “gap groups”: all ungulates except moose, moose, bears, cougars and canids, all other carnivores (mostly mustelids), and all other mammals (small species). Gap probability models were built for each group.
+<br>
+
+After examining the resulting curves, species were grouped into 6 “gap groups”: all ungulates except moose, moose, bears, cougars and canids, all other carnivores (mostly mustelids), and all other mammals (small species). Gap probability models were built for each of these groups in this next step, and the results from these models are used in the calculation of total time in front of the camera. 
 
 ```{r gap-group-model}
 
@@ -503,6 +525,7 @@ mod_gapcheck_group <- df_gapcheck %>%
   left_join(df_gap_groups, by = "common_name") %>%
   group_by(gap_group) %>%
   nest() %>%
+  # Define model for each gap group, and make predictions
   mutate(model = map(.x = data, ~ smooth.spline(x = .$diff_time, y = .$left, df = 3)),
          pred = map(.x = model, ~ predict(., x = 20:120))) %>%
   select(gap_group, pred) %>%
@@ -513,21 +536,23 @@ mod_gapcheck_group <- df_gapcheck %>%
 
 ```
 
-Across all species, there is a 27% chance that the species left when the gap was only 20 seconds long. That implies that they may also have left in slightly shorter gaps, where we assume they all stayed. However, it makes little difference to the total duration to miss a few shorter gaps where the animals left (i.e., to add that extra little bit of time in), especially because we add time to the start and end of a series (next section). At the other end, there was evidence that animals left in about 70% of the 120 second gaps.  Snowshoe hares, porcupines and black bears lowered that average. The first two are small mammals that trigger the camera erratically, making it hard to figure out which way they are moving, so that they generally don’t present definitive evidence of leaving the field-of-view and returning. Bears, and wolves to a lesser extent, often lie/loll around, mainly at lured deployments, and could go for relatively long periods without triggering the camera. Missing long periods when bears are present but not moving would lead to underestimates of their densities. For trend estimates and habitat modeling, we would have to assume that the prevalence of those misses does not change over time or by habitat type. The other species had higher leaving rates for long gaps, so that we are probably not too inaccurate to assume that they left during any gap >120 seconds.
+Across all species, there is a 27% chance that the species left when the gap was only 20 seconds long. That implies that they may also have left in slightly shorter gaps, where we assume they all stayed. However, it makes little difference to the total duration to miss a few shorter gaps where the animals left (i.e., to add that extra little bit of time in), especially because we add time to the start and end of a series (next section). At the other end, there was evidence that animals left in about 70% of the 120 second gaps.  Snowshoe hares, porcupines and black bears lowered that average. The first two are small mammals that trigger the camera erratically, making it hard to figure out which way they are moving, so that they generally don’t present definitive evidence of leaving the field-of-view and returning. Bears, and wolves to a lesser extent, often lie/loll around, mainly at lured deployments, and could go for relatively long periods without triggering the camera. Missing long periods when bears are present but not moving would lead to underestimates of their densities. For trend estimates and habitat modeling, we would have to assume that the prevalence of those misses does not change over time or by habitat type. The other species had higher leaving rates for long gaps, so that we are probably not too inaccurate to assume that they left during any gap greater than 120 seconds.
 
-Ideally, each gap between images would be checked to see if the animal left or not. However, the process of checking each gap is time-consuming. When we have direct information on gap-leaving, we define a series as any set of images separated by <120 seconds, unless the animal was observed to leave the field-of-view (in gaps of 20-120 seconds that were checked) (illustrated in \@ref(fig:gap-illustration)). If it did leave in a gap, then the series ends at the preceding image, and a new series starts when the animal (or a different individual) returns in the subsequent image. The species is in the field-of-view from the first to the last image in the field-of-view (plus end buffers; next sub-section).
+Ideally, each gap between images would be checked to see if the animal left or not. However, the process of checking each gap is time-consuming. When we have direct information on gap-leaving, we define a series as any set of images separated by less than 120 seconds, unless the animal was observed to leave the field-of-view (in gaps of 20-120 seconds that were checked) (illustrated in \@ref(fig:gap-illustration)). If it did leave in a gap, then the series ends at the preceding image, and a new series starts when the animal (or a different individual) returns in the subsequent image. The species is in the field-of-view from the first to the last image in the field-of-view (plus end buffers; next sub-section).
 
 When we haven’t examined 20-120 second gaps, a series is all images separated by <120 seconds. However, we then use the above models of gap-leaving probabilities to prorate the 20-120 second gaps for the probability that the species left for a gap of that length. Instead of the full 20-120 second gap length, we only add the duration of the gap x (1 – probability of leaving) to the total series length (illustrated in \@ref(fig:gap-illustration), bottom). For example, if there were 4 images separated by 10 seconds, 5 seconds, 60 seconds and 10 seconds, and the model for that species showed a 40% chance that it left in a gap of 60 seconds, then the total time in the field-of-view for that series is 10 + 5 + 60 x (1 - 0.4) + 10 = 61 seconds.  (And, if there were an average of 1.25 individuals in those 4 images, the total animal-seconds would be 1.25 x 61 = 76.25 animal-seconds). 
 
 Finally, we must consider the time before the first image and after the last image of a series, and time to allocate to single-image series'. We estimate that by calculating the average time between images in all series, separately by species (Table 1). This is typically 4-7 seconds for larger species and somewhat longer for small species. This time is added to the duration of each series, including to single-image series, which would otherwise have a duration of 0 seconds (striped sections in \@ref(fig:gap-illustration). The assumption is that the animal is in the field-of-view for half the average inter-photo time before the first image, and after the last image. (Although animals often appear to be further into the field-of-view when the first image is taken, and nearer the edge when the final one is taken, presumably reflecting a lag-time in the motion-detector – the assumption is that this averages to the average interval within series). When we have 20-120 second gaps that are using the probabilistic gap-leaving model, we add this extra time on the start and end of the whole series in the normal way, and we also added this time multiplied by the probability of leaving for each 20-120 second gap, to account for the cases where the animal would have left the field-of-view in those 20-120 second gaps and hence created another series (bottom of \@ref(fig:gap-illustration)). 
 
-```{r gap-illustration, fig.cap="Illustration of how sequential individual images are converted to series, and how the species' total time in the field-of-view is calculated for each series, when we have directly examined gaps of 20-120 seconds (top) or not examined them and used probabilistic model instead (bottom)."}
+```{r gap-illustration, echo=FALSE, fig.cap="Illustration of how sequential individual images are converted to series, and how the species' total time in the field-of-view is calculated for each series, when we have directly examined gaps of 20-120 seconds (top) or not examined them and used probabilistic model instead (bottom).", fig.align="center"}
 
 include_graphics(here("./docs/pics/gap_illustration.png"))
 
 ```
 
-Here we re-run series numbering to include the checked gap information and flag gaps that will need probabilistic time assignment. We also calculate the average time between images in a series by species (Table \@ref(tab:tbi)).
+<br>
+
+In the next step, we re-run series numbering to include the checked gap information and flag gaps that will need probabilistic time assignment. We also calculate the average time between images in a series by species (presented in Table \@ref(tab:tbi)).
 
 ```{r tbi, fig.cap=""}
 
@@ -566,12 +591,16 @@ df_tbi %>%
 
 ```
 
-Next, for unclassified 20-120 second gaps, we adjust for the probability of having left by using the predicted probabilistic time assignment from the above models. The appropriate gap group model is used for each species.  
+<br> 
+
+Next, for unclassified 20-120 second gaps, we adjust for the probability of having left by using the predicted probabilistic time assignment from the above models. The appropriate gap group model is used for each species. A new variable, `diff_time_adj`, is calculated.  
 
 ```{r}
 
+# Use gap group model to include probabilistic time assignment
+
 df_series_3 <- df_series_2 %>%
-  # Join in gap group information
+  # Join in gap group lookup table
   left_join(df_gap_groups, by = "common_name") %>%
   # Join in probabilistic gap information
   left_join(mod_gapcheck_group, by = c("gap_group", "diff_time")) %>%
@@ -582,9 +611,9 @@ df_series_3 <- df_series_2 %>%
 
 ```
 
-## calculate total time in front of camera
+## Calculate total time in front of camera
 
-We then proceed to calculate the total time for each series, first for multi-image series' and then single image series'.
+Using the difference in time between each image that has been adjusted for the probability of leaving (when gaps are between 20 and 120 second), we then proceed to calculate the total time for each series, first for multi-image series' and then single image series'.
 
 ```{r}
 
@@ -612,23 +641,31 @@ df_tfs_2 <- df_series_3 %>%
   bind_rows(df_tfs_1) %>%
   arrange(series_num)
 
+# There are a total of 92,418 series.
+
 ```
 
-The next step is to add time before the first photo and after the last photo, which is assumed to be the average of that species time between images (`df_tbi`). For single image series, this is the entire length of time.  
+<br> 
+
+The next step is to add time before the first photo and after the last photo, which is assumed to be the average of that species time between images (`df_tbi`). For single image series, this becomes the entire length of time. The dataframe created below, `df_tfs_final`, contains fields for the series number, the species, the number of images, and the total (adjusted) time that the animal was captured on camera.  
 
 ```{r}
+
+# Calculate total time in front of camera, including time before the first and after the last image.
 
 df_tfs_final <- df_series_3 %>%
   # Add tbi information
   left_join(df_tbi, by = "common_name") %>%
   select(series_num, common_name, time_btwn_photos) %>%
   distinct() %>%
-  # Join to previous time calculation 
+  # Join to previous time calculation (both single- and multiple series) 
   left_join(df_tfs_2, by = "series_num") %>%
   mutate(series_total_time = total_time + time_btwn_photos) %>%
   select(series_num, common_name, count, series_total_time)
   
 ```
+
+<br>
 
 Finally, we account for the number of individuals in the series. The number of individuals of each species visible in each image are simply counted. Juveniles – often in company of their mothers – are counted and therefore included in the density estimates. We note age class of each animal so that we could exclude non-adults if we wanted for some analysis (assuming we are confident in that designation in all images). Distant animals are sometimes captured in images triggered by an individual closer to the camera. We count all individuals, because it is not clear how we would know an individual was too distant to trigger the camera. To be consistent, when we are collecting data on animals in front of or behind the 5m pole, we also include all individuals, even distant individuals when a closer animal clearly triggered the image. Distant animals therefore increase the effective detection distance, although only to the same extent as any animal beyond the 5m pole.
 
@@ -661,13 +698,9 @@ df_series_4 <- df_series_3 %>%
   left_join(df_n_ani, by = "series_num") %>%
   left_join(df_tfs_final, by = c("series_num", "common_name")) %>%
   mutate(DeploymentYear = paste(deployment, Year, sep = "_")) %>%
-  select(DeploymentYear, deployment, year = Year, date_time_taken, series_num, n_photos, common_name, sex,
-         age_class, mean_animals, series_total_time) %>%
+  select(DeploymentYear, deployment, year = Year, date_time_taken, series_num, 
+         n_photos, common_name, sex, age_class, mean_animals, series_total_time) %>%
   ungroup()
-
-  # Add lure here?
-
-# Potential issue to flag - seems to be some disagreement btwn multiple_animals and number_animals. 
 
 ```
 
@@ -691,9 +724,11 @@ test <- df_series_4 %>%
 
 ```
 
-Series summary stats, including number of series, unique sites, number of individuals, and total duration in front of camera by species and year, are available in Table \@ref(tab:series-summary).
+<br>
 
-```{r series-summary, fig.cap=""}
+Series summary stats, including number of series, unique sites, number of individuals, and total duration in front of camera by species and year, are available in Table \@ref(tab:series-summary). 
+
+```{r series-summary, fig.cap="Series summary statistics."}
 
 # Count number of images by year and species
 df_series_2_img <- df_series_2 %>%
@@ -722,28 +757,203 @@ df_series_summary <- df_series_4 %>%
 # Create datable for html display.
 datatable(df_series_summary,
           rownames = FALSE,
-          filter = "top",
+          class = 'cell-border stripe',
           colnames = c("Species", "Year", "Images", "Series", "Sites", "Individuals",
-                       "Seconds", "Minutes", "Hours", "Mean Time"))
+                       "Seconds", "Minutes", "Hours", "Mean Time"),
+          caption = 'Table 2. Series Summary Statistics.')
 
 ```
 
-## Time cameras are operating
+## Time cameras are operating {#time}
 
 The next ingredient in the density calculation is accounting for the total time that the camera deployments are operating. For many cameras, the total operating time is simply the time from just after the initial set-up to just before the final collection. However, some cameras fail before they are picked up, most often because they run out of memory or battery power after taking many pictures of cows, vegetation or occasionally perching birds. Other cameras fail because they fall over or are knocked over by cows. We use specific criteria for determining when a camera is too displaced to use – if the 5m pole is no longer in the image field, or the camera is tilted >30° from horizontal. Some of those may be re-established either during a mid-season visit or simply when the camera tilts back (e.g. if it is on a post that cows lean on), leading to a gap in operating time for the camera.
 
-Times each ABMI camera was operating are illustrated in Figure \@ref(fig:dep-duration). Many off-grid cameras, which target specific habitat types to improve habitat models or address other specific questions, or non-ABMI studies incorporated into the ABMI database, are set out at different times on-grid cameras. Recent years have included some cameras that were deployed in the fall and left out through the winter and following summer. Variation in start and end dates has increased over the four years, due to operational logistics (crew availability and site access). Cameras in the south-central part of the province were more likely to have short operating times because of cows. Besides creating different total operating times that need to be included in the density estimates, the varying deployment periods interact with seasonal variation in detectability of different species, which we need to address in the analysis (section **UPDATE**).
+The time that each ABMI camera was operating are illustrated in the plots below. Many off-grid cameras, which target specific habitat types to improve habitat models or address other specific questions, or non-ABMI studies incorporated into the ABMI database, are set out at different times on-grid cameras. Recent years have included some cameras that were deployed in the fall and left out through the winter and following summer. Variation in start and end dates has increased over the four years, due to operational logistics (crew availability and site access). Cameras in the south-central part of the province were more likely to have short operating times because of cows. Besides creating different total operating times that need to be included in the density estimates, the varying deployment periods interact with seasonal variation in detectability of different species, which we need to address in the analysis (section **UPDATE**).
 
-```{r dep-duration, fig.cap="ABMI camera deployment durations during the 2018 field season."}
+```{r echo=FALSE}
 
-winter_start <- as.POSIXct("2017-10-15")
-winter_end <- as.POSIXct("2018-04-18")
-summer_end <- as.POSIXct("2018-10-15")
+# Define year-specific colors
 
-inter1 <- interval(winter_start, winter_end)
-inter2 <- interval(winter_end, summer_end)
+pal2015 <- "#66717E" # dark grey
+pal2016 <- "#5d74a5" # dark blue
+pal2017 <- "#64a8a8" # turquoise 
+pal2018 <- "#625a94" # dark purple
 
-plot5 <- df_cam_startend %>%
+# Define year-specific endpoints
+
+# 2015
+winter_start15 <- as.POSIXct("2015-02-17")
+winter_end15 <- as.POSIXct("2015-04-18")
+summer_end15 <- as.POSIXct("2015-10-15")
+
+inter1_15 <- interval(winter_start15, winter_end15)
+inter2_15 <- interval(winter_end15, summer_end15)
+
+# 2016
+winter_start16 <- as.POSIXct("2015-10-15")
+winter_end16 <- as.POSIXct("2016-04-18")
+summer_end16 <- as.POSIXct("2016-10-15")
+
+inter1_16 <- interval(winter_start16, winter_end16)
+inter2_16 <- interval(winter_end16, summer_end16)
+
+# 2017
+winter_start17 <- as.POSIXct("2016-10-15")
+winter_end17 <- as.POSIXct("2017-04-18")
+summer_end17 <- as.POSIXct("2017-10-15")
+
+inter1_17 <- interval(winter_start17, winter_end17)
+inter2_17 <- interval(winter_end17, summer_end17)
+
+# 2018
+winter_start18 <- as.POSIXct("2017-10-15")
+winter_end18 <- as.POSIXct("2018-04-18")
+summer_end18 <- as.POSIXct("2018-10-15")
+
+inter1_18 <- interval(winter_start18, winter_end18)
+inter2_18 <- interval(winter_end18, summer_end18)
+
+
+```
+
+### Deployment durations {.tabset}
+
+#### 2015
+
+```{r echo=FALSE, fig.cap="ABMI camera deployment durations during the 2015 field season.", fig.align="center"}
+
+df_cam_startend %>%
+  # Some weird values to filter out. 
+  filter(StartTime != "#VALUE!",
+         EndTime != "#N/A",
+         EndTime != "#VALUE!") %>%
+  mutate(StartTime = ymd_hm(StartTime),
+         EndTime = ymd_hm(EndTime)) %>%
+  filter(str_detect(deployment, "ABMI"),
+         year == "2015") %>%
+  mutate(deployment = as.factor(deployment)) %>%
+  mutate(deployment = fct_reorder(deployment, StartTime, .desc = TRUE)) %>%
+  ggplot(mapping = aes(y = deployment)) +
+  geom_segment(mapping = aes(x = StartTime, xend = EndTime, 
+                             y = deployment, yend = deployment),
+               color = pal2015) +
+  geom_vline(xintercept = as.numeric(winter_start15), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end15), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end15), 
+             col = "darkred", size = 1, linetype = 2) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  annotate("text", 
+           x = as.POSIXct(inter1_15@start + as.duration(inter1_15) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2_15@start + as.duration(inter2_15) / 2),
+           y = 35, label = "Summer", size = 7) + 
+  labs(y = "ABMI Deployments",
+       title = "ABMI camera deployment durations for the 2015 field season") +
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_text(size = 13, face = "bold"),
+        axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+        axis.title.x = element_blank())
+
+```
+
+#### 2016
+
+```{r echo=FALSE, fig.cap="ABMI camera deployment durations during the 2016 field season.", fig.align="center"}
+
+df_cam_startend %>%
+  # Some weird values to filter out. 
+  filter(StartTime != "#VALUE!",
+         EndTime != "#N/A",
+         EndTime != "#VALUE!") %>%
+  mutate(StartTime = ymd_hm(StartTime),
+         EndTime = ymd_hm(EndTime)) %>%
+  filter(str_detect(deployment, "ABMI"),
+         year == "2016",
+         StartTime > "2015-04-07",
+         EndTime < "2017-07-06") %>%
+  mutate(deployment = as.factor(deployment)) %>%
+  mutate(deployment = fct_reorder(deployment, StartTime, .desc = TRUE)) %>%
+  ggplot(mapping = aes(y = deployment)) +
+  geom_segment(mapping = aes(x = StartTime, xend = EndTime, 
+                             y = deployment, yend = deployment),
+               color = pal2016) +
+  geom_vline(xintercept = as.numeric(winter_start16), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end16), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end16), 
+             col = "darkred", size = 1, linetype = 2) +
+  scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
+  annotate("text", 
+           x = as.POSIXct(inter1_16@start + as.duration(inter1_16) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2_16@start + as.duration(inter2_16) / 2),
+           y = 35, label = "Summer", size = 7) + 
+  labs(y = "ABMI Deployments",
+       title = "ABMI camera deployment durations for the 2016 field season") +
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_text(size = 13, face = "bold"),
+        axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+        axis.title.x = element_blank())
+
+```
+
+#### 2017
+
+```{r echo=FALSE, fig.cap="ABMI camera deployment durations during the 2017 field season.", fig.align="center"}
+
+df_cam_startend %>%
+  # Some weird values to filter out. 
+  filter(StartTime != "#VALUE!",
+         EndTime != "#N/A",
+         EndTime != "#VALUE!") %>%
+  mutate(StartTime = ymd_hm(StartTime),
+         EndTime = ymd_hm(EndTime)) %>%
+  filter(str_detect(deployment, "ABMI"),
+         year == "2017") %>%
+  mutate(deployment = as.factor(deployment)) %>%
+  mutate(deployment = fct_reorder(deployment, StartTime, .desc = TRUE)) %>%
+  ggplot(mapping = aes(y = deployment)) +
+  geom_segment(mapping = aes(x = StartTime, xend = EndTime, 
+                             y = deployment, yend = deployment),
+               color = pal2017) +
+  geom_vline(xintercept = as.numeric(winter_start17), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end17), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end17), 
+             col = "darkred", size = 1, linetype = 2) +
+  scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
+  annotate("text", 
+           x = as.POSIXct(inter1_17@start + as.duration(inter1_17) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2_17@start + as.duration(inter2_17) / 2),
+           y = 35, label = "Summer", size = 7) + 
+  labs(y = "ABMI Deployments",
+       title = "ABMI camera deployment durations for the 2017 field season") +
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_text(size = 13, face = "bold"),
+        axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+        axis.title.x = element_blank())
+
+```
+
+#### 2018
+
+```{r echo=FALSE, fig.cap="ABMI camera deployment durations during the 2018 field season.", fig.align="center"}
+
+df_cam_startend %>%
   # Some weird values to filter out. 
   filter(StartTime != "#VALUE!",
          EndTime != "#N/A",
@@ -758,19 +968,19 @@ plot5 <- df_cam_startend %>%
   ggplot(mapping = aes(y = deployment)) +
   geom_segment(mapping = aes(x = StartTime, xend = EndTime, 
                              y = deployment, yend = deployment),
-               color = "cornflowerblue") +
-  geom_vline(xintercept = as.numeric(winter_start), 
+               color = pal2018) +
+  geom_vline(xintercept = as.numeric(winter_start18), 
              col = "darkred", size = 1, linetype = 2) +
-  geom_vline(xintercept = as.numeric(winter_end), 
+  geom_vline(xintercept = as.numeric(winter_end18), 
              col = "darkred", size = 1, linetype = 2) +
-  geom_vline(xintercept = as.numeric(summer_end), 
+  geom_vline(xintercept = as.numeric(summer_end18), 
              col = "darkred", size = 1, linetype = 2) +
   scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
   annotate("text", 
-           x = as.POSIXct(inter1@start + as.duration(inter1) / 2),
+           x = as.POSIXct(inter1_18@start + as.duration(inter1_18) / 2),
            y = 35, label = "Winter", size = 7) +
   annotate("text",
-           x = as.POSIXct(inter2@start + as.duration(inter2) / 2),
+           x = as.POSIXct(inter2_18@start + as.duration(inter2_18) / 2),
            y = 35, label = "Summer", size = 7) + 
   labs(y = "ABMI Deployments",
        title = "ABMI camera deployment durations for the 2018 field season") +
@@ -781,13 +991,150 @@ plot5 <- df_cam_startend %>%
         axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
         axis.title.x = element_blank())
 
-plot5
+```
+
+### Total deployments over time {.tabset}
+
+The following plots illustrate the total number of cameras operating at each point in time over the course of each year.
+
+#### 2015
+
+```{r echo=FALSE, fig.cap="Total number of ABMI cameras operating throughout the 2015 field season.", fig.align="center"}
+
+# Line graph showing the cumulative number of cameras operating over the course of the year.
+
+df_cam_op_2015 <- time.since.2009 %>%
+  filter(str_detect(DeploymentYear, "ABMI")) %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  mutate(Year = as.character(Year)) %>%
+  filter(Year == "2015") %>%
+  select(-c(Deployment, Year)) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Date")
+
+days <- seq(as.POSIXct("2009-01-01"), as.POSIXct("2019-03-03"), by = "days")
+
+data.frame(Date = days, Num_Cameras = df_cam_op_2015$.) %>%
+  filter(Num_Cameras > 0) %>%
+  ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
+  geom_area(fill = pal2015, color = "black") + #, size = 2) +
+  geom_vline(xintercept = as.numeric(winter_start15), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end15), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end15), 
+             col = "darkred", size = 1, linetype = 2) +
+  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
+  annotate("text", 
+           x = as.POSIXct(inter1_15@start + as.duration(inter1_15) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2_15@start + as.duration(inter2_15) / 2),
+           y = 35, label = "Summer", size = 7) +
+  labs(x = "", 
+       y = "Number of Cameras",
+       title = "Total number of ABMI cameras operating throughout the 2015 field season.") +
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 13, face = "bold"))
 
 ```
 
-Figure \@ref(fig:dep-cumulative) shows the cumulative number of cameras operating over the course of the year.
+#### 2016
 
-```{r dep-cumulative, fig.cap="Cumulative number of ABMI cameras operating throughout the 2018 field season."}
+```{r echo=FALSE, fig.cap="Total number of ABMI cameras operating throughout the 2016 field season.", fig.align="center"}
+
+# Line graph showing the cumulative number of cameras operating over the course of the year.
+
+df_cam_op_2016 <- time.since.2009 %>%
+  filter(str_detect(DeploymentYear, "ABMI")) %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  mutate(Year = as.character(Year)) %>%
+  filter(Year == "2016") %>%
+  select(-c(Deployment, Year)) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Date")
+
+data.frame(Date = days, Num_Cameras = df_cam_op_2016$.) %>%
+  filter(Num_Cameras > 0) %>%
+  ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
+  geom_area(fill = pal2016, color = "black") + #, size = 2) +
+  geom_vline(xintercept = as.numeric(winter_start16), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end16), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end16), 
+             col = "darkred", size = 1, linetype = 2) +
+  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
+  scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
+  annotate("text", 
+           x = as.POSIXct(inter1_16@start + as.duration(inter1_16) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2_16@start + as.duration(inter2_16) / 2),
+           y = 35, label = "Summer", size = 7) +
+  labs(x = "", 
+       y = "Number of Cameras",
+       title = "Total number of ABMI cameras operating throughout the 2018 field season.") +
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 13, face = "bold"))
+
+```
+
+#### 2017
+
+```{r echo=FALSE,fig.cap="Total number of ABMI cameras operating throughout the 2017 field season.", fig.align="center"}
+
+# Line graph showing the cumulative number of cameras operating over the course of the year.
+
+df_cam_op_2017 <- time.since.2009 %>%
+  filter(str_detect(DeploymentYear, "ABMI")) %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  mutate(Year = as.character(Year)) %>%
+  filter(Year == "2017") %>%
+  select(-c(Deployment, Year)) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Date")
+
+data.frame(Date = days, Num_Cameras = df_cam_op_2017$.) %>%
+  filter(Num_Cameras > 0) %>%
+  ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
+  geom_area(fill = pal2017, color = "black") + #, size = 2) +
+  geom_vline(xintercept = as.numeric(winter_start17), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(winter_end17), 
+             col = "darkred", size = 1, linetype = 2) +
+  geom_vline(xintercept = as.numeric(summer_end17), 
+             col = "darkred", size = 1, linetype = 2) +
+  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
+  scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
+  annotate("text", 
+           x = as.POSIXct(inter1_17@start + as.duration(inter1_17) / 2),
+           y = 35, label = "Winter", size = 7) +
+  annotate("text",
+           x = as.POSIXct(inter2_17@start + as.duration(inter2_17) / 2),
+           y = 35, label = "Summer", size = 7) +
+  labs(x = "", 
+       y = "Number of Cameras",
+       title = "Cumulative number of ABMI cameras operating throughout the 2017 field season.") +
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 13, face = "bold"))
+
+
+```
+
+#### 2018
+
+```{r echo=FALSE,fig.cap="Total number of ABMI cameras operating throughout the 2018 field season.", fig.align="center"}
 
 # Line graph showing the cumulative number of cameras operating over the course of the year.
 
@@ -801,26 +1148,24 @@ df_cam_op_2018 <- time.since.2009 %>%
   as.data.frame() %>%
   rownames_to_column(var = "Date")
 
-days <- seq(as.POSIXct("2009-01-01"), as.POSIXct("2019-03-03"), by = "days")
-
 plot6 <- data.frame(Date = days, Num_Cameras = df_cam_op_2018$.) %>%
   filter(Date >= "2017-09-01") %>%
   ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
-  geom_area(fill = "cornflowerblue", color = "black") + #, size = 2) +
-  geom_vline(xintercept = as.numeric(winter_start), 
+  geom_area(fill = pal2018, color = "black") + #, size = 2) +
+  geom_vline(xintercept = as.numeric(winter_start18), 
              col = "darkred", size = 1, linetype = 2) +
-  geom_vline(xintercept = as.numeric(winter_end), 
+  geom_vline(xintercept = as.numeric(winter_end18), 
              col = "darkred", size = 1, linetype = 2) +
-  geom_vline(xintercept = as.numeric(summer_end), 
+  geom_vline(xintercept = as.numeric(summer_end18), 
              col = "darkred", size = 1, linetype = 2) +
   # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
   scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
   scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
   annotate("text", 
-           x = as.POSIXct(inter1@start + as.duration(inter1) / 2),
+           x = as.POSIXct(inter1_18@start + as.duration(inter1_18) / 2),
            y = 35, label = "Winter", size = 7) +
   annotate("text",
-           x = as.POSIXct(inter2@start + as.duration(inter2) / 2),
+           x = as.POSIXct(inter2_18@start + as.duration(inter2_18) / 2),
            y = 35, label = "Summer", size = 7) +
   labs(x = "", 
        y = "Number of Cameras",
@@ -833,9 +1178,88 @@ plot6
 
 ```
 
-Finally, Figure \@ref(fig:dep-days) showing the distribution in the number of days that the cameras are operating. 
+### Distribution of duration lengths {.tabset}
 
-```{r dep-days, fig.cap="Distribution in number of operating days by ABMI deployments in 2018."}
+Finally, the plots below show the distribution in the number of days that the cameras were operating for each of the field seasons.
+
+#### 2015
+
+```{r echo=FALSE, fig.cap="Distribution in number of operating days by ABMI deployments in 2015.", fig.align="center"}
+
+# Histogram showing the distribution in the number of days that the cameras are operating.
+
+plot7 <- df_tbd_summary %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  filter(Year == "2015",
+         str_detect(Deployment, "ABMI")) %>%
+  ggplot(mapping = aes(x = total)) +
+  geom_histogram(fill = pal2015, color = "black") +
+  labs(x = "Number of Operating Days",
+       y = "Number of cameras",
+       title = "Distribution in number of operating days for cameras of the 2015 field season.") +
+  scale_y_continuous(breaks = seq(0, 150, by = 25)) +
+  scale_x_continuous(breaks = c(0,50,100,150,200,250,300)) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 13, face = "bold"),
+        axis.text = element_text(size = 11))
+  
+plot7
+
+```
+
+#### 2016
+
+```{r echo=FALSE,fig.cap="Distribution in number of operating days by ABMI deployments in 2016.", fig.align="center"}
+
+# Histogram showing the distribution in the number of days that the cameras are operating.
+
+plot7 <- df_tbd_summary %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  filter(Year == "2016",
+         str_detect(Deployment, "ABMI")) %>%
+  ggplot(mapping = aes(x = total)) +
+  geom_histogram(fill = pal2016, color = "black") +
+  labs(x = "Number of Operating Days",
+       y = "Number of cameras",
+       title = "Distribution in number of operating days for cameras of the 2016 field season.") +
+  scale_y_continuous(breaks = seq(0, 125, by = 25)) +
+  scale_x_continuous(breaks = c(0,50,100,150,200,250,300)) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 13, face = "bold"),
+        axis.text = element_text(size = 11))
+  
+plot7
+
+```
+
+#### 2017
+
+```{r echo=FALSE,fig.cap="Distribution in number of operating days by ABMI deployments in 2017.", fig.align="center"}
+
+# Histogram showing the distribution in the number of days that the cameras are operating.
+
+plot7 <- df_tbd_summary %>%
+  separate(DeploymentYear, into = c("Deployment", "Year"), sep = "_") %>%
+  filter(Year == "2017",
+         str_detect(Deployment, "ABMI")) %>%
+  ggplot(mapping = aes(x = total)) +
+  geom_histogram(fill = pal2017, color = "black") +
+  labs(x = "Number of Operating Days",
+       y = "Number of cameras",
+       title = "Distribution in number of operating days for cameras of the 2017 field season.") +
+  scale_y_continuous(breaks = seq(0, 150, by = 25)) +
+  scale_x_continuous(breaks = c(0,50,100,150,200,250,300)) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 13, face = "bold"),
+        axis.text = element_text(size = 11))
+  
+plot7
+
+```
+
+#### 2018
+
+```{r echo=FALSE,fig.cap="Distribution in number of operating days by ABMI deployments in 2018.", fig.align="center"}
 
 # Histogram showing the distribution in the number of days that the cameras are operating.
 
@@ -844,10 +1268,10 @@ plot7 <- df_tbd_summary %>%
   filter(Year == "2018",
          str_detect(Deployment, "ABMI")) %>%
   ggplot(mapping = aes(x = total)) +
-  geom_histogram(fill = "cornflowerblue", color = "black") +
+  geom_histogram(fill = pal2018, color = "black") +
   labs(x = "Number of Operating Days",
        y = "Number of cameras",
-       title = "Distribution in number of operating days.") +
+       title = "Distribution in number of operating days for cameras of the 2018 field season.") +
   scale_y_continuous(breaks = seq(0, 150, by = 25)) +
   scale_x_continuous(breaks = c(0,50,100,150,200,250,300)) +
   theme_classic() +
@@ -915,7 +1339,7 @@ Detection distances are expected to differ for different species, by habitat typ
 
 First, we create the combined habitat types, which will be tried in the models.
 
-```{r}
+```{r echo=FALSE}
 
 # Probably best placed in another pre-processing script, too much clutter for this document.
 
@@ -1454,7 +1878,7 @@ df_density <- df_dens_ing %>%
 
 The distributions of density estimates of species at deployments are extremely skewed, with a large majority of deployments having none of a species, some deployments having low densities (one or a few individuals passing by) while a few have very high values (one or more individuals spending long periods in front of a particular camera) (\@ref(fig:dens-est-dist)). Such distributions require large sample sizes to obtain precise estimates – for example, for yearly changes in density in a region or to use for estimating abundances in different habitat types. Ecologists’ intuitive experience with adequate sample sizes may be very misleading with these kinds of distributions. Pilot studies and formal analysis of expected precision are recommended for large projects.
 
-```{r dens-est-dist, fig.cap="Distribution of density estimates across all deployments."}
+```{r dens-est-dist, fig.cap="Distribution of density estimates across all deployments.", out.width="100%"}
 
 plot8 <- df_density %>%
   filter(common_name %in% df_native_top11$common_name) %>%
@@ -1465,10 +1889,11 @@ plot8 <- df_density %>%
     scale_fill_viridis_d(direction = -1) +
     coord_cartesian(ylim = c(0,250)) +
     #scale_y_log10() +
-    labs(x = expression(Density~(individuals~per~km^2))) +
+    labs(x = expression(Density~(individuals~per~km^2)),
+         y = "Number of Deployments") +
     facet_wrap(~ common_name, scales = "free") +
-    theme_classic() +
-    theme(legend.title = element_blank())
+    theme_light() +
+    theme(legend.position = "none")
 
 plot8
 
@@ -1476,7 +1901,7 @@ plot8
 
 For habitat modeling, we find that the density estimates are best treated as a compound distribution of presence/absence – modeling how the 0 records differ from the non-0 records – and of abundance where the species is present – explaining variation in abundance where the species was recorded. We model presence/absence with the typical logit-linked binomial model, and the abundance-given-presence distribution with a log-normal distribution, which fits most of the species’ distributions reasonably well (\@ref(fig:dens-agp-log)).  This compound distribution is the same as a zero-inflated log-normal distribution, but explicitly treating the two components separately allows more flexible modeling and critical examination of each component.
 
-```{r dens-agp-log, fig.cap="Distribution of log-transformed presence (non-0) densities."}
+```{r dens-agp-log, fig.cap="Distribution of log-transformed presence (non-0) densities.", out.width="100%"}
 
 plot9 <- df_density %>%
   filter(common_name %in% df_native_top11$common_name) %>%
@@ -1486,10 +1911,12 @@ plot9 <- df_density %>%
   ggplot(mapping = aes(x = cpue_km2, fill = common_name)) +
     geom_histogram(bins = 30) +
     scale_fill_viridis_d(direction = -1) +
-    scale_x_log10() +
-    labs(x = expression(Density~(individuals~per~km^2))) +
+    scale_x_log10(labels = scales::number_format(accuracy = 0.1)) +
+    labs(x = expression(Density~(individuals~per~km^2)),
+         y = "Number of Deployments") +
     facet_wrap(~ common_name, scales = "free") +
-    theme(legend.title = element_blank())
+    theme_light() +
+    theme(legend.position = "blank")
 
 plot9
 

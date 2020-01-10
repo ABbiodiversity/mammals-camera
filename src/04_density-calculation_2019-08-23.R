@@ -15,6 +15,11 @@ library(tidyverse)
 library(lubridate)
 library(mgcv)
 
+# Path to data folder on ABMI Science Centre S: drive
+abmisc_data <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+# Path to results folder on ABMI Science Centre S: drive
+abmisc_results <- "S:/github-repos-data/SC-Camera-Mammals/results/"
+
 #-------------------------------------------------------------------------------
 
 # Import data
@@ -63,6 +68,11 @@ df_dep_veghf_dist <- df_dep_veghf %>%
   mutate(VegHF = ifelse(VegForDetectionDistance == "WetShrub", "Shrub", VegForDetectionDistance)) %>%
   left_join(df_pole_veg_lookup, by = "VegHF")
 
+test <- df_dep_veghf %>%
+  # WetShrub not used in modeling.
+  mutate(VegHF = ifelse(VegForDetectionDistance == "WetShrub", "Shrub", VegForDetectionDistance)) %>%
+  left_join(df_pole_veg_lookup, by = "VegHF")
+
 SpTable<-c("Bear","BigForestCarnivores","BigForestUngulates","CoyoteFox",
            "Elk (wapiti)","Lynx","Mule deer","SmallForest","SmallOpen","WTDeer",
            "Pronghorn","Bighorn sheep")  # Update this if more modeling groups added.
@@ -73,11 +83,11 @@ pred.season<-c("Summer","Winter")
 site.list<-unique(df_dep_veghf_dist$DeploymentYear)
 
 # Path to detection distance models.
-fname.models <- "./beta/Detection distance models "
+fname.models <- paste0(abmisc_results, "modeling/Detection distance models ")
 
 dd<-dd.lci<-dd.uci<-array(NA,c(length(site.list),length(SpTable),2))
 
-for (sp in c(1:length(SpTable) - 2)) {  # The last (2) species do not have the full set of models - treated separately.
+for (sp in c(1:(length(SpTable) - 2))) {  # The last (2) species do not have the full set of models - treated separately.
   fname<-paste(fname.models, SpTable[sp], ".rdata", sep="")
   load(fname)  # Model m, bic.wt
   hab.list<-as.character(m[[2]]$xlevels[[1]])  # The shared subset of habitat types in both VegHF models

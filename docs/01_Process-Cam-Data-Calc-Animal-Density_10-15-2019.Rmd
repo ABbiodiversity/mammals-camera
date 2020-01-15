@@ -106,20 +106,6 @@ abmi_dep <- st_read(paste0(abmisc,"base/spatial/abmi_deployments_public.shp"),
 
 ```
 
-
-```{r params}
-
-# Set analysis parameters for density estimation
-
-# Seasonal start/end dates (julian day):
-summer.start.j <- 106 # April 16
-summer.end.j <- 288 # October 15
-
-# Reconyx camera field-of-view angle:
-cam_fov_ang <- 42
-
-```
-
 # Overview: Simple explanation and assumptions {#overview}
 
 Density is the number of objects (trees, animals, etc.) per unit area. If a 100-m$^2$ plot contains one tree, the density is 1 tree/100-m$^2$, or 10,000 trees per km$^2$ ( Figure \@ref(fig:density)).  Similarly, if a camera has a field-of-view of 100-m$^2$ and there is always one animal in the field-of-view for the whole time that the camera is operating, the density of that species is 1 animal per 100-m$^2$, or 10,000 animals per km$^2$. It doesn’t matter if the animal is moving around within the field-of-view, as long as it stays in the field-of-view for the whole time. On the other hand, if that camera only has an animal in the field-of-view 1/10,000 of the time that it is operating, there is 1/10,000 animal per 100-m$^2$, or 1 animal per km-$^2$.  If the camera has two animals together for 1/10,000 of the time, this gives 2/10,000 animals per 100-m$^2$, or 2 animals per km-$^2$. This is how we use cameras to calculate density.
@@ -183,9 +169,9 @@ We begin with the entirety of the native mammal image data, collected from all d
 
 ## Sampling coverage
 
-The ABMI samples across the province in a grid-pattern, with sampling points 20-km apart. At each point, four cameras are placed in a square approximately 600-m apart from each other. Figure \@ref(fig:map_deployments) shows the ABMI's sampling distribution using camera deployments from the years 2015-2018. Note that each deployment (black dot) consists of four cameras. 
+The ABMI samples across the province in a grid-pattern, with sampling points 20-km apart. At each point, four cameras are placed in a square approximately 600-m apart from each other. Figure \@ref(fig:mapdeployments) shows the ABMI's sampling distribution using camera deployments from the years 2015-2018. Note that each deployment (black dot) consists of four cameras. 
 
-```{r map_deployments, echo=FALSE, out.width="70%", fig.cap="ABMI Camera Deployments from 2015-2018.", fig.align="center"}
+```{r mapdeployments, echo=FALSE, out.width="70%", fig.cap="ABMI Camera Deployments from 2015-2018.", fig.align="center"}
 
 include_graphics(here("docs/pics/map_deployments.png")) 
 
@@ -206,7 +192,7 @@ kable(sample_n(df_native_all, size = 10))
 
 We summarise the number of images captured by species (common name) between 2013 and 2018 in Figure \@ref(fig:images) for the 11 most common animals.
 
-```{r images, fig.cap="Total images captured to-date (2013-2018).", fig.align="center"}
+```{r images, fig.cap="Total images captured to-date (2013-2018).", fig.align="center", out.width="85%"}
 
 # Retrieve the 11 most common species by image count
 df_native_top11 <- df_native_all %>%
@@ -225,9 +211,11 @@ df_native_top11 %>%
   coord_flip() +
   scale_y_continuous(labels = scales::comma) +
   theme_light() +
-  labs(title = "Total number of images captured for 11 common species",
+  labs(title = "Total number of images captured for 11 common species.",
        y = "Images") +
   theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank(),
         axis.title.y = element_blank(),
         axis.text.y = element_text(size = 11),
         axis.title.x = element_text(size = 14),
@@ -241,7 +229,7 @@ White-tailed and Mule deer account for a large percentage of images taken to-dat
 
 Next, we plot the number of images taken of each these species by year (Figure \@ref(fig:imagesperyear)). 
 
-```{r imagesperyear, fig.cap="Number of images taken of each species from 2015-2018", fig.align="center"}
+```{r imagesperyear, fig.cap="Number of images taken of each species from 2015-2018", out.width="100%", fig.align="center"}
 
 # Is this an effective visualization? Maybe not.  
 
@@ -257,11 +245,15 @@ df_native_all %>%
   scale_fill_viridis_d(direction = -1) +
   scale_y_continuous(labels = scales::comma) +
   facet_wrap(~common_name, scales = "free_y", nrow = 3) +
-  theme_classic() +
-  labs(x = "",
+  theme_light() +
+  labs(title = "Number of images captured by year for 11 common species.",
+       x = "",
        y = "Number of Images") +
   theme(legend.position = "none",
-        axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 14),
+        strip.text = element_text(color = "black"))
 
 ```
 
@@ -271,7 +263,7 @@ Finally, we can display the occurrences of each of these species at each ABMI si
 
 <br>
 
-```{r map}
+```{r map, echo=FALSE}
 
 # Prepare natural region layer
 sf_nr <- sf_nr %>%
@@ -371,7 +363,20 @@ map1
 
 # Processing data {#processing}
 
-There are a number of processing steps that need to be done to develop the necessary ingredients for density estimation. 
+There are a number of processing steps that need to be done to develop the necessary ingredients for density estimation.
+
+```{r params}
+
+# Set analysis parameters for density estimation
+
+# Seasonal start/end dates (julian day):
+summer.start.j <- 106 # April 16
+summer.end.j <- 288 # October 15
+
+# Reconyx camera field-of-view angle:
+cam_fov_ang <- 42
+
+```
 
 ## Identify series'
 
@@ -438,7 +443,7 @@ We then create a new variable, `left`, which indicates whether the animal stayed
 
 We can visualize this data in Figure \@ref(fig:gap-raw), which displays the same common species seen before. In general, observations where the animal stayed in the field of view are more closely clustered around the 20 second mark, and observations where the animal left the field of view are more evenly spread across the range of gap lengths.   
 
-```{r gap-raw, fig.cap="Plots of image gap length (s) and whether the animal stayed in the camera field of view or left.", out.width="100%"}
+```{r gap-raw, fig.cap="Plots of image gap length (s) and whether the animal stayed in the camera field of view or left.", out.width="100%", fig.align="center"}
 
 # Create dataframe of each obs we previously flagged to check gap
 df_gapcheck <- df_series %>%
@@ -763,6 +768,8 @@ datatable(df_series_summary,
 
 ```
 
+<br>
+
 ## Time cameras are operating {#time}
 
 The next ingredient in the density calculation is accounting for the total time that the camera deployments are operating. For many cameras, the total operating time is simply the time from just after the initial set-up to just before the final collection. However, some cameras fail before they are picked up, most often because they run out of memory or battery power after taking many pictures of cows, vegetation or occasionally perching birds. Other cameras fail because they fall over or are knocked over by cows. We use specific criteria for determining when a camera is too displaced to use – if the 5m pole is no longer in the image field, or the camera is tilted >30° from horizontal. Some of those may be re-established either during a mid-season visit or simply when the camera tilts back (e.g. if it is on a post that cows lean on), leading to a gap in operating time for the camera.
@@ -816,6 +823,8 @@ inter2_18 <- interval(winter_end18, summer_end18)
 ```
 
 ### Deployment durations {.tabset}
+
+The following plots illustrate the patterns of camera placement and take-down (or failure) over the course of each field season.
 
 #### 2015
 
@@ -994,7 +1003,7 @@ df_cam_startend %>%
 
 ### Total deployments over time {.tabset}
 
-The following plots illustrate the total number of cameras operating at each point in time over the course of each year.
+These plots show the total number of cameras operating at each point in time over the course of each year.
 
 #### 2015
 
@@ -1203,6 +1212,8 @@ df_tbd_summary %>%
 
 ```
 
+<br>
+
 #### 2016
 
 ```{r echo=FALSE,fig.cap="Distribution in number of operating days by ABMI deployments in 2016.", fig.align="center"}
@@ -1226,6 +1237,8 @@ df_tbd_summary %>%
 
 ```
 
+<br>
+
 #### 2017
 
 ```{r echo=FALSE,fig.cap="Distribution in number of operating days by ABMI deployments in 2017.", fig.align="center"}
@@ -1248,6 +1261,8 @@ df_tbd_summary %>%
         axis.text = element_text(size = 11))
 
 ```
+
+<br>
 
 #### 2018
 
@@ -1340,7 +1355,7 @@ The next step is to create the combined habitat types, each of which will be tri
 
 Next, we develop the detection distance models. 
 
-```{r eval=FALSE}
+```{r}
 
 # Clean EDD modeling training data
 
@@ -1377,12 +1392,18 @@ mod_edd <- df_edd_train %>%
     # Season only model
     m8 = map(.x = data, .f = ~ gam(formula = pBehind ~ Season, weights = n, data = .x, family = "binomial")),
     # Season + VegHF groupings
-    m9 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF + Season, weights = n, data = .x, family = "binomial")),
-    m10 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF1 + Season, weights = n, data = .x, family = "binomial")),
-    m11 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF2 + Season, weights = n, data = .x, family = "binomial")),
-    m12 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF3 + Season, weights = n, data = .x, family = "binomial")),
-    m13 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF4 + Season, weights = n, data = .x, family = "binomial")),
-    m14 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF5 + Season, weights = n, data = .x, family = "binomial")))
+    m9 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF + Season, 
+                                   weights = n, data = .x, family = "binomial")),
+    m10 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF1 + Season, 
+                                    weights = n, data = .x, family = "binomial")),
+    m11 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF2 + Season, 
+                                    weights = n, data = .x, family = "binomial")),
+    m12 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF3 + Season, 
+                                    weights = n, data = .x, family = "binomial")),
+    m13 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF4 + Season, 
+                                    weights = n, data = .x, family = "binomial")),
+    m14 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF5 + Season, 
+                                    weights = n, data = .x, family = "binomial")))
 
 # Calculate BIC to determine weightings for each model
 df_edd_bic <- mod_edd %>%
@@ -1399,7 +1420,7 @@ df_edd_bic <- mod_edd %>%
 
 Once we've created the models, we can make predictions!
 
-``` {r eval=FALSE}
+```{r}
 
 # Data to use to make predictions - all deployments w/ all VegHF, season, and distance group combinations. 
 df_edd_test <- df_veghf_detdist %>%
@@ -1477,22 +1498,40 @@ df_edd_final <- df_veghf_detdist %>%
 
 Let's take a look at the results:
 
-```{r}
+```{r fig.align="center", fig.height=7, fig.cap = "Estimated Effective Detection Distance for various species groups."}
 
-df_edd_final %>%
+source(here("./src/functions/camera-mammals-functions_2020_01_15.R"))
+
+library(grid)
+
+distgroup_labels <- as_labeller(c(`BigForestCarnivores` = "Big Forest Carnivores (Wolves, Cougars, Wolverines)",
+                                `BigForestUngulates` = "Big Forest Ungulates (Moose, Bison, Caribou)",
+                                `CoyoteFox` = "Coyote, Fox",
+                                `Mule deer` = "Mule Deer",
+                                `WTDeer` = "White-tailed Deer"))
+
+plot <- df_edd_final %>%
   filter(!is.na(edd)) %>%
   select(-DeploymentYear) %>%
   distinct() %>%
   ggplot(aes(x = VegHF, y = edd, fill = Season)) +
   geom_col(position = "dodge") +
-  facet_wrap(~ dist_group) +
-  scale_fill_manual(values = c("#008837","#a6611a")) +
+  facet_wrap(~ dist_group, nrow = 3, labeller = distgroup_labels) +
+  scale_fill_manual(values = c("#de9b71","#81a9ad")) +
+  guides(fill = guide_legend(title.position = "top",
+                             label.position = "right",
+                             nrow = 2)) +
   theme_light() +
-  labs(x = "Vegetation Human Footprint Category",
+  labs(x = "Landcover Category",
        y = "Estimated Effective Detection Distance (m)") +
-  theme(axis.text.x = element_text(angle = 90),
-        legend.position = "bottom",
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.title.y = element_text(size = 14),
         strip.text = element_text(color = "black"))
+
+grid.draw(shift_legend(plot))
 
 ```
 
@@ -1555,7 +1594,7 @@ df_lure_effects <- df_series_lure %>%
 
 Make some plots:
 
-```{r}
+```{r echo=FALSE}
 
 # Figure out some visualizations for this. 
 
@@ -1652,11 +1691,6 @@ df_dens_ing <- df_series_full %>%
 
 ```
 
-```{r}
-
-
-```
-
 Finally, we can calculate density:
 
 ```{r}
@@ -1677,7 +1711,7 @@ df_density <- df_dens_ing %>%
 
 The distributions of density estimates of species at deployments are extremely skewed, with a large majority of deployments having none of a species, some deployments having low densities (one or a few individuals passing by) while a few have very high values (one or more individuals spending long periods in front of a particular camera) (Figure \@ref(fig:dens-est-dist)). Such distributions require large sample sizes to obtain precise estimates – for example, for yearly changes in density in a region or to use for estimating abundances in different habitat types. Ecologists’ intuitive experience with adequate sample sizes may be very misleading with these kinds of distributions. Pilot studies and formal analysis of expected precision are recommended for large projects.
 
-```{r dens-est-dist, fig.cap="Distribution of density estimates across all deployments.", out.width="100%"}
+```{r dens-est-dist, fig.cap="Distribution of density estimates across all deployments.", out.width="100%", fig.align="center"}
 
 df_density %>%
   filter(common_name %in% df_native_top11$common_name) %>%
@@ -1690,17 +1724,20 @@ df_density %>%
     #scale_y_log10() +
     labs(x = expression(Density~(individuals~per~km^2)),
          y = "Number of Deployments",
-         title = "Distribution in estimated density among camera deployments for 11 common species.") +
+         title = "Distribution in estimated density among camera deployments for 11 common\nspecies.") +
     facet_wrap(~ common_name, scales = "free") +
     theme_light() +
     theme(legend.position = "none",
+          panel.grid.minor = element_blank(),
           strip.text = element_text(color = "black"))
 
 ```
 
+<br> 
+
 For habitat modeling, we find that the density estimates are best treated as a compound distribution of presence/absence – modeling how the 0 records differ from the non-0 records – and of abundance where the species is present – explaining variation in abundance where the species was recorded. We model presence/absence with the typical logit-linked binomial model, and the abundance-given-presence distribution with a log-normal distribution, which fits most of the species’ distributions reasonably well (Figure \@ref(fig:dens-agp-log)). This compound distribution is the same as a zero-inflated log-normal distribution, but explicitly treating the two components separately allows more flexible modeling and critical examination of each component.
 
-```{r dens-agp-log, fig.cap="Distribution of log-transformed presence (non-0) densities.", out.width="100%"}
+```{r dens-agp-log, fig.cap="Distribution of log-transformed presence (non-0) densities.", out.width="100%", fig.align="center"}
 
 df_density %>%
   filter(common_name %in% df_native_top11$common_name) %>%
@@ -1714,13 +1751,16 @@ df_density %>%
     scale_x_log10(labels = scales::number_format(accuracy = 0.1)) +
     labs(x = expression(Density~(individuals~per~km^2)),
          y = "Number of Deployments",
-         title = "Log-normal distribution of density using only presence records for 11 common species.") +
+         title = "Log-normal distribution of density using only presence records for 11 common\nspecies.") +
     facet_wrap(~ common_name, scales = "free") +
     theme_light() +
     theme(legend.position = "blank",
+          panel.grid.minor = element_blank(),
           strip.text = element_text(color = "black"))
 
 ```
+
+<br>
 
 # Assumptions of the camera density index
 
@@ -1728,10 +1768,11 @@ There are a number of strong assumptions involved in using this measure to give 
 
 + **Assumption 1: The cameras are a random or otherwise representative sample of the area.** As mentioned in the first section, density is calculated for the area in the fields-of-view of the cameras. To make inferences about density over a larger region, those fields-of-view need to represent the larger region (as is the case for any sampling). This means that cameras are not intentionally put along trails or other features that attract animals. Unfortunately, it also means that cameras should be placed in micro-habitats randomly. This is not possible logistically, because the cameras need some open space in front of them. 
 
-This practical limitation on camera micro-locations creates problems for interpreting habitat models when habitat types differ in amount of suitably open micro-habitats, if animals either favour or avoid those more open habitats. We are really surveying the use of suitably open micro-habitats within larger habitat types. Micro-habitat selectivity may also create uncertainty in trend, if there are substantial changes in habitat types and the amount of suitable open micro-habitats. Violations of this assumption do not intuitively seem like major potential sources of bias, but it isn’t clear how we would evaluate their effect rigorously.
-A more pervasive problem in the south of the province is that we cannot deploy cameras in active cultivated areas, so we use adjacent fence lines, leave strips or woodlot edges. Several species clearly favour those areas. This complicates interpretation of habitat use and trend in extensively cultivated regions, particularly as amount of those edge features changes over time. We would ideally be treating our design as a stratified sample, but we do not have the resources to estimate the areas of the strata we are sampling non-proportionally (or even to define them well) – i.e., we do not know the areas represented by the types of fence lines, woodlots, etc. that can accommodate cameras, and we do not track how those change over time. Interpreting trends from cameras in the south will require more substantive assumptions.
+    This practical limitation on camera micro-locations creates problems for interpreting habitat models when habitat types differ in amount of suitably open micro-habitats, if animals either favour or avoid those more open habitats. We are really surveying the use of suitably open micro-habitats within larger habitat types. Micro-habitat selectivity may also create uncertainty in trend, if there are substantial changes in habitat types and the amount of suitable open micro-habitats. Violations of this assumption do not intuitively seem like major potential sources of bias, but it isn’t clear how we would evaluate their effect rigorously.
+    
+    A more pervasive problem in the south of the province is that we cannot deploy cameras in active cultivated areas, so we use adjacent fence lines, leave strips or woodlot edges. Several species clearly favour those areas. This complicates interpretation of habitat use and trend in extensively cultivated regions, particularly as amount of those edge features changes over time. We would ideally be treating our design as a stratified sample, but we do not have the resources to estimate the areas of the strata we are sampling non-proportionally (or even to define them well) – i.e., we do not know the areas represented by the types of fence lines, woodlots, etc. that can accommodate cameras, and we do not track how those change over time. Interpreting trends from cameras in the south will require more substantive assumptions.
 
-Cameras could potentially be deployed along game trails, if the design also included some cameras off of these trails, and the results were analysed as a stratified sample of the region. The difficulty again is in determining the area of the “game trail” and “not game trail” strata for whatever units the study is comparing (habitat types, years if the goal is to measure population change).  Extremely detailed ecological information would be needed to know what constitutes a game trail – e.g., the first seismic line put into a forested area versus the hundredth, linear features in open areas, what happens if a natural game trail is clearcut or burned, etc.?
+    Cameras could potentially be deployed along game trails, if the design also included some cameras off of these trails, and the results were analysed as a stratified sample of the region. The difficulty again is in determining the area of the “game trail” and “not game trail” strata for whatever units the study is comparing (habitat types, years if the goal is to measure population change).  Extremely detailed ecological information would be needed to know what constitutes a game trail – e.g., the first seismic line put into a forested area versus the hundredth, linear features in open areas, what happens if a natural game trail is clearcut or burned, etc.?
 
 + **Assumption 2: Animals are not attracted to or repelled by the cameras, and they do not change their behaviour (time spent in front of the camera) because of the cameras.** This is clearly not true for some species, such as bears and moose that regularly investigate the camera and the pole we use to measure detection distance, even when the deployment does not have a lure. It is also violated when cameras are deployed in winter and animals follow the snowshoe tracks in front of the camera, which is frequently seen in the days after winter deployments. These effects increase density estimates. For habitat models or trend that only need relative density, we will have to assume that these effects do not vary substantially by habitat type or between years. Because we have images, we could measure whether species spend different amounts of time investigating the camera or unlured poles in different habitats and whether that changes over time. We could then potentially correct for the biasing effects in habitat models or trend estimates. We have not yet tried that to see how well it works.
 
@@ -1741,7 +1782,7 @@ Cameras could potentially be deployed along game trails, if the design also incl
 
 + **Assumption 5: The presence of an animal does not reduce the camera operating time.** This assumption is unfortunately violated fairly often when animals, mainly bears, disable cameras. In addition to the extra time in front of the camera that this behaviour produces (violating assumption 2), this also reduces the operating time of the camera, including for all future times when the animal would not be present. Both effects bias density estimates of the camera-destroying species upwards. The bias can be very large when bears disable cameras shortly after deployment. We use a minimum cut-off of 10 operating days to reduce the extreme problems, but we still have cameras that are destroyed shortly after that cut-off that produce very high density estimates. We could omit the last series for an animal that disables a camera, but there are other problems with that solution - it would bias estimates downwards since it removes an animal that would probably have been detected anyway, and there are also often several series of the species in the hours or days(s) before the camera is disabled, which would require a set of timing rules to be developed.
 
-Calibration of cameras, as technology changes or existing cameras age, is discussed separately (section 8), but is anticipated to require serious effort. Lures, which violate assumption 2, can be accommodated if there is a rigorous design that allows their effects to be estimated (section 7). For both of these corrections, it is important to remember that any uncertainty in the correction factor becomes uncertainty in the main scientific questions the cameras are meant to address. An imprecise correction for changing technology over time, for example, would add directly to the imprecision of any trend estimates. There is no point in putting in the sampling effort needed for a precise trend estimate if the effort is not put in to get a correspondingly precise calibration coefficient when technology changes.
+    Calibration of cameras, as technology changes or existing cameras age, is discussed separately (section 8), but is anticipated to require serious effort. Lures, which violate assumption 2, can be accommodated if there is a rigorous design that allows their effects to be estimated (section 7). For both of these corrections, it is important to remember that any uncertainty in the correction factor becomes uncertainty in the main scientific questions the cameras are meant to address. An imprecise correction for changing technology over time, for example, would add directly to the imprecision of any trend estimates. There is no point in putting in the sampling effort needed for a precise trend estimate if the effort is not put in to get a correspondingly precise calibration coefficient when technology changes.
 
 
 

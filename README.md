@@ -18,7 +18,7 @@ This repository currently hosts the code associated with estimating mammal densi
 
 Available documentation:
 
-1. Code-annotated version of **Animal Density from Camera Data** report can be viewed [here](https://abbiodiversity.github.io/mammals-camera/01_Process-Cam-Data-Calc-Animal-Density_10-15-2019.html).
+1. Code-annotated version of the **Animal Density from Camera Data** report can be viewed [here](https://abbiodiversity.github.io/mammals-camera/01_Process-Cam-Data-Calc-Animal-Density_10-15-2019.html).
 
 Under development:
 
@@ -28,4 +28,6 @@ Under development:
 
 1. Estimating density for user-defined areas of interest. 
 
+## Using the Raw Data
 
+If you would like to use the raw data to estimate density, or be able to run the code available in this repository, please contact Marcus Becker (mabecker@ualberta.ca).

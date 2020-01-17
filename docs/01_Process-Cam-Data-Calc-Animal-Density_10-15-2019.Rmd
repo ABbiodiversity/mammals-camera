@@ -1,7 +1,7 @@
 ---
 title: "Processing Camera Data to Calculate Animal Density"
 author: "David Huggard, Marcus Becker"
-date: "October 15, 2019"
+date: "December, 2019"
 output:
   bookdown::html_document2:
     highlight: tango
@@ -41,6 +41,7 @@ library(leaflet)
 library(leaflet.extras)
 library(crosstalk)
 library(mgcv)
+library(grid)
 
 # Path to data folder on ABMI Science Centre S: drive
 abmisc <- "S:/github-repos-data/SC-Camera-Mammals/data/"
@@ -183,10 +184,9 @@ First, let's examine the format the data arrives in from the Wildtrax database a
 
 [^1]: Explain the Wildtrax connection procedure. 
 
-```{r include=FALSE}
+```{r}
 
-# View a random sample of the data
-kable(sample_n(df_native_all, size = 10))
+glimpse(df_native_all)
 
 ```
 
@@ -1464,7 +1464,7 @@ df_edd_pred <- df_edd_test %>%
   pivot_longer(cols = pred1:pred14, names_to = "model", values_to = "predictions") %>%
   arrange(dist_group)
 
-# Add BIC information, create adjusted predictions with BIC weighting
+# Add BIC information, create adjusted predictions with BIC weighting, and calculate EDD
 df_edd_pred_adj <- df_edd_bic %>%
   unnest(bic.wt) %>%
   filter(dist_group %in% SpGroups) %>%
@@ -1501,8 +1501,6 @@ Let's take a look at the results:
 ```{r fig.align="center", fig.height=7, fig.cap = "Estimated Effective Detection Distance for various species groups."}
 
 source(here("./src/functions/camera-mammals-functions_2020_01_15.R"))
-
-library(grid)
 
 distgroup_labels <- as_labeller(c(`BigForestCarnivores` = "Big Forest Carnivores (Wolves, Cougars, Wolverines)",
                                 `BigForestUngulates` = "Big Forest Ungulates (Moose, Bison, Caribou)",

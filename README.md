@@ -14,11 +14,13 @@ ABMI remote camera mammal data is a raw data file comprised of species occurrenc
 
 ## Current Code Base
 
-This repository currently hosts the code associated with estimating mammal density using images captured from remote cameras. The ABMI uses a method based on random encounter and staying time (REST), utilizing data collected on the number of individuals, the total time in the camera field of view, the area of the camera field of view, and the total camera operating time in the field. Further details can be found in this [report](https://www.abmi.ca/home/publications/501-550/516).
+This repository currently hosts the code associated with estimating mammal density using images captured from remote cameras. The ABMI uses a method based on random encounter and staying time (REST), utilizing data collected on the number of individuals, the total time in the camera field of view, the area of the camera field of view, and the total camera operating time in the field. Further details can be found in this report, [**Animal Density from Camera Data**](https://www.abmi.ca/home/publications/501-550/516), available on the ABMI's website publication page.
 
 Available documentation:
 
 1. Code-annotated version of the **Animal Density from Camera Data** report can be viewed [here](https://abbiodiversity.github.io/mammals-camera/01_Process-Cam-Data-Calc-Animal-Density_10-15-2019.html).
+
++ This document contains the same content as the original report, but with accompanying code for the user to understand each step of the analysis. 
 
 Under development:
 

@@ -1,0 +1,152 @@
+---
+title: "Monitoring the mammalian community in Alberta's boreal region with remote cameras"
+subtitle: "Introducing a plot-based measure of animal density based on staying time in front of the camera."
+author: "Huggard et al."
+date: "March 23, 2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Outline
+
+1. In this paper we propose a simple plot-based measure to estimate animal density from data collected via camera traps. This method is based on the total time that a species spend in the camera's field of view, which is the area surveyed by the camera, and is a variant of the method developed by Nakashima et al (2019). This metric of animal density is independent of home range size and movement rates, and does not require individual recognition. 
+
+2. We introduce the Alberta Biodiversity Monitoring Institute's **boreal** region monitoring program for mammals, and how this plot-based measure is used to estimate density of various species and form inference around their habitat preferences. We describe the fundamental tenets of this method, including how form sequential camera images into series that approximate staying time, and how we account for the different effective detection distances of cameras by habitat type, season, and species.
+
+3. We report results from field data collected between 2013-2020 for several mid- to large- mammal species ranging from very common (white-tailed deer) to less common (gray wolf). Also to be included are moose, hares, bears, and lynx.
+
+4. Next we show how density measured at each camera deployment can be scaled up to estimate density for an area of interest. We then compare density obtained via this method with remote cameras to that obtained via more traditional surveys method in Alberta (i.e. aerial surveys). We compare moose density estimates obtained in these two ways, and suggest a preliminary way to scale camera estimate to their 'aerial-equivalent'.  
+
+4. Next we go into greater detail about the expected precision of these estimates, and how it varies according to the species and the number of cameras placed on the landscape. [Dave's document].
+
+5. Finally, we outline how camera trap sampling can enable habitat modeling through the use of density estimates derived at camera trap stations. We used a joint presence-absence/abundance-given-presence approach to model moose habitat associations in the boreal region of Alberta, Canada.  
+
+# Introduction
+
+Accurate and reliable information regarding an animal population size, and how it changes over time, is a fundamental goal of many ecological studies and monitoring programs. 
+
+Previously, many studies relied on visual detections (e.g. aerial surveys) or signs (e.g. dung counts, snowtracks) to estimate population sizes. These measures were often costly, inefficient, or produced only rough estimates. Other methods, such as capture-recapture analyses, have strict data requirements (e.g. individual recognition) in order to obtain their products.
+
+
+
+Literature is this so far: 
+
+- *Nakashima et al (2019)*
+
+Captures staying time as video; for those researchers who use cameras without video, we describe a procedure to turn series of images taken at discrete intervals into a proxy for a continuous record.  
+
+- *Rowcliffe et al (2008)* - REM
+
+The Random Encounter Model (REM) provides a means to estimate abundance from camera trap rate, but requires camera sensitivity to be quantified.
+
+Studies using these methods rely on camera placements at random positions, which ensures random movement of animals relative to the camera position.
+
+No individual recognition required. 
+
+- *Rowcliffe et al (2011)* - Defines the area in which the number of detections is maximized. 
+
+In this paper a method for estimating species- and survey-specific dimensions of the camera trap detection zone. Detection probability is a function of animal position relative to the camera. 
+
+- Sollmann et al (2013) - bit of a skeptic. Sounds the alarm for needing EDD. 
+
+- *Hofmeester et al (2017)*
+
+Estimating the effective detection distance of camera traps. Correcting for different capture rates.
+Many camera-trapping studies do not correct for differences between habitats, implicitly assuming that sampling efficiency of camera traps is constant across habitats. 
+Recommend five distance intervals, at minimum. 
+
+- *Pfeffer et al (2017)* - used REM, with EDD incorporated. Three distance markers. 
+
+What we are doing is piecing together a new approach. 
+
+---
+
+# Proposed Method
+
+Density = 
+
+$$Density = \frac{\sum(number~of~individuals~*~time~in~field~of~view)}{area~of~field~of~view~*~total~camera~operating~time}$$
+The components are thus:
+
+## Organize images into series
+
+Develop rule set for what constitutes a 'series', which is a continuous set of images. 
+
+Images < 120 seconds are considered part of a series.
+
+Develop models for probabilistic gaps. 
+
+## Calculate total time spent in front of the camera
+
+Calculate the number of animal unit seconds spent in the camera field of view 
+
+- rule sets for adding time to each series before the first image and after the last image.
+- probabilistic time assignment
+- add the time
+
+## Calculate the Effective Detection Distance (EDD) of the cameras
+
+This can vary by species x habitat type x season
+
+## Calculate density at each individual deployment
+
+Viola!
+
+---
+
+# Field Data
+
+Introduction to ABMI's data collection efforts to date.
+
+We're going to focus on ... moose, white-tailed deer, black bears, coyotes, lynx, snowshoe hare. This was discretionary. Do folks have a different preference here?
+
+Maps, plots, tables:
+- Detections, occurrences
+- Model for probabilistic gaps
+
+---
+
+# Expected precision of density estimates
+
+Monte Carlo simulations 
+
+---
+
+# Comparison to other measures of density
+
+- Aerial surveys (WMU moose, Elk Island?)
+- Lynx
+- Bunny stuff
+
+Various modeling that can be done - hope to get more recent data soon.
+
+```{r}
+
+
+
+```
+
+
+---
+
+# Application - Modeling with Density Estimates
+
+I say we use moose as the example here.
+
+- Habitat association modeling.
+- Show northern model? Predictions of relative abundance? 
+
+
+
+
+
+
+
+

@@ -30,6 +30,8 @@ Under development:
 
 1. Estimating density for user-defined areas of interest. 
 
++ The `abmi.camera.extras` [R package](https://github.com/mabecker89/abmi.camera.extras) is currently available directly from Github.
+
 ## Using the Raw Data
 
 If you would like to use the raw data to estimate density, or be able to run the code available in this repository, please contact Marcus Becker (mabecker@ualberta.ca).

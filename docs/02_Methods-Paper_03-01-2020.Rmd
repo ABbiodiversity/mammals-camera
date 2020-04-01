@@ -10,9 +10,7 @@ output:
 
 ```{r setup, include=FALSE}
 
-knitr::opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE, cache=FALSE)
-
-
+knitr::opts_chunk$set(include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE, cache=FALSE)
 
 ```
 
@@ -37,157 +35,64 @@ knitr::opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eva
 
 - Use of REST-derived density estimates at individual camera deployment sampling points to study habitat preference.
   
-```{r, cache=TRUE}
+```{r}
 
 # Load packages
 library(dplyr) # data manipulation
 library(readr) # read in csv data
 library(mgcv) # gam modeling
 library(stringr)
-library(purrr)
+library(knitr)
 library(tidyr)
 library(lubridate) # dates
 library(forcats) # factors
 library(ggplot2) # visualizations
+library(here)
 
 # Path to data folder on ABMI Science Centre S: drive
 abmisc <- "S:/github-repos-data/SC-Camera-Mammals/data/"
 # Path to data folder on MB's external hardrive 
 mbhd <- "D:/SC-Camera-Mammals/data/"
 
-# Import data:
-# Raw native mammal data (2013-2018):
-df_native_all <- read_csv(paste0(mbhd,"base/ALL_native-mammals_09-01-2019.csv"),
-                          col_types = cols(distance = col_character(),
-                                           number_during_gap = col_number(),
-                                           number_individuals = col_character()),
-                          na = "")
+# Import data
+df_gapcheck <- read_csv(paste0(mbhd, "processed/probabilistic-gaps/gap-check.csv"))
+mod_gapcheck_sub <- read_csv(paste0(mbhd, "processed/probabilistic-gaps/gap-mod.csv"))
+df_edd_final <- read_csv(paste0(mbhd, "processed/detection_distance/predictions/edd_species_site_season_prelim.csv"))
+df_density <- read_csv(paste0(mbhd, "processed/density/density-by-season-deployment-species.csv"))
+df_comp <- read_csv(paste0(mbhd, "supplemental/aerial-camera-combined_2014-19.csv")) %>%
+  mutate(wt1 = sqrt(Camera.n))
 
-# Species distance groups:
-df_dist_groups <- read_csv(paste0(mbhd,"lookup/species-distance-groups.csv"))
-
-# Vegetation and Human Footprint (HF) information for each deployment:
-df_veghf_detdist <- read_csv(paste0(mbhd,"lookup/camera-soilveghf-detdist-all.csv"))
-
-# Veg-HF groupings for detection distance models:
-df_veg_lookup <- read_csv(paste0(mbhd,"lookup/veg-pole-distance.csv"))
-
-# Lure information for all deployments:
-df_cam_lure <- read_csv(paste0(mbhd,"lookup/camera-lure-info-all.csv"))
-
-# Set analysis parameters for density estimation
-
-# Seasonal start/end dates (julian day):
-summer.start.j <- 106 # April 16
-summer.end.j <- 288 # October 15
-
-# Reconyx camera field-of-view angle:
-cam_fov_ang <- 42
-
-# Species we're interested in for this paper:
+# Example species
 Sp <- c("White-tailed Deer", "Moose", "Black Bear", "Coyote", "Snowshoe Hare", "Gray Wolf")
 
-# Species gap groups:
-df_gap_groups <- read_csv(paste0(mbhd,"lookup/species-gap-groups.csv")) %>%
-  # Name the groups for clarity
-  mutate(gap_group = case_when(
-    gap_group == 1 ~ "Most ungulates",
-    gap_group == 2 ~ "Moose",
-    gap_group == 3 ~ "Small carnivores",
-    gap_group == 4 ~ "Canids cougar",
-    gap_group == 5 ~ "Bears",
-    gap_group == 6 ~ "Small mammals"))
-
-# Camera operating dates/times:
-df_cam_startend <- read_csv(paste0(mbhd,"lookup/camera-startend-all.csv")) %>%
-  mutate(DeploymentYear = paste(deployment, year, sep ="_")) %>%
-  select(DeploymentYear, deployment, year, StartTime, EndTime)
-
-# Camera operating timeframes (wide):
-time.since.2009 <- read_csv(paste0(mbhd,"processed/dave-objects/Camera operating days since 2009 Feb 2019 ALL.csv"))
-time.by.day <- read_csv(paste0(mbhd, "processed/dave-objects/Camera operating days Feb 2019 ALL.csv"))
-df_tbd_summary <- read_csv(paste0(mbhd,"processed/dave-objects/Summary of camera operating days Feb 2019 ALL.csv"))
-
-
 ```
 
-```{r}
-
-# Identify series'
-
-df_series <- df_native_all %>%
-  # Transform date_time_taken to POSIXct object
-  mutate(date_time_taken = ymd_hms(date_time_taken)) %>%
-  # Order observations
-  arrange(deployment, Year, common_name, date_time_taken) %>%
-  # Identify series
-  mutate(series_num = 0,
-         # Lagged date_time_taken
-         date_time_taken_lag = lag(date_time_taken),
-         # Calculate difference in time (seconds) between images
-         diff_time = as.numeric(date_time_taken - date_time_taken_lag),
-         # Lagged species
-         common_name_lag = lag(common_name),
-         # Is it a different species? (boolean)
-         diff_sp = ifelse(common_name != common_name_lag, TRUE, FALSE),
-         # Lagged deployment
-         deployment_lag = lag(deployment),
-         # Is it a different deployment? (boolean)
-         diff_dep = ifelse(deployment != deployment_lag, TRUE, FALSE),
-         # Identify series
-         diff_series = ifelse(diff_dep == TRUE | diff_sp == TRUE | diff_time > 120,
-                              1, 0),
-         # Number series
-         series_num = c(0, cumsum(diff_series[-1])),
-         # Flag gaps that need checking later
-         gap_check = ifelse(diff_dep == FALSE & diff_sp == FALSE & (diff_time <= 120 & diff_time >= 20),
-                            1, 0),
-         # Lagged gap class (to align with gap_check and diff_time)
-         gap_class_lag = lag(gap_class)) %>%
-  # Clean up species common_name
-  filter(!common_name == "Falcons and allies") %>%
-  filter(!common_name == "Wolves, Coyotes and Allies") %>%
-  mutate(common_name = ifelse(common_name == "Foxes", "Red fox", common_name),
-         common_name = ifelse(common_name == "Mule Deer", "Mule deer", common_name))
-
-# Create dataframe of each obs we previously flagged to check gap
-df_gapcheck <- df_series %>%
-  filter(!is.na(gap_class_lag) & gap_check == "1") %>%
-  select(common_name, gap_class_lag, diff_time) %>%
-  # Create new left variable - did the animal leave the field of view?
-  mutate(left = ifelse(gap_class_lag == "P", 0, 1)) %>%
-  select(-gap_class_lag)
-
-mod_gapcheck_sub <- df_gapcheck %>%
-  filter(common_name %in% Sp) %>%
-  group_by(common_name) %>%
-  nest() %>%
-  mutate(model = map(.x = data, ~ smooth.spline(x = .$diff_time, y = .$left, df = 3)),
-         pred = map(.x = model, ~ predict(., type = "response", x = 20:120))) %>%
-  select(common_name, pred) %>%
-  unnest_wider(pred) %>%
-  unnest(cols = c(x,y)) %>%
-  rename(seconds = x, pred = y)
-
-```
 
 ---
 
 # Introduction
 
+(broad discussion of the literature to-date.)
+
 Accurate and reliable information regarding an animal population size, and how it changes over time, is a fundamental goal of many ecological studies and monitoring programs. 
 
 Previously, many studies relied on visual detections (e.g. aerial surveys) or signs (e.g. dung counts, snowtracks) to estimate population sizes. These measures were often costly, inefficient, or produced only rough estimates. Other methods, such as capture-recapture analyses, have strict data requirements (e.g. individual recognition) in order to obtain their products.
 
-Camera trapping is a (relatively) new technique that provides a viable alternative approach of sampling from a population. Camera traps can be left out in the field for months at a time, collecting quantitative information 24 hours per day in an automated manner. Cameras also have the advantage of relatively low labour costs, and capital costs are decreasing as the technology improves and becomes more widespread (references *Burton et al 2015*, *Steenweg et al, 2017*).
+Camera trapping is an emerging research technique that provides a viable alternative approach of sampling from a population. Camera traps can be left out in the field for months at a time, collecting quantitative information 24 hours per day in an automated manner. Cameras also have the advantage of relatively low labour costs, and capital costs are decreasing as the technology improves and becomes more widespread (references *Burton et al 2015*, *Steenweg et al, 2017*).
 
-For species with marked populations, capture-recapture techniques have been combined with camera trapping to provide effective estimates of animal population size (*Karanth and Nichols, 1998*) or density (spatial explicit capture-recapture, *Borchers et al, 2014*). However, the requirement for individual recognition is an exclusionary property in many study contexts. *Chandler and Royle (2013)* propose a method to make use of spatial dependence in observations without the need for individual recognition to make inferences about individual distribution and density.
+For species with marked populations, capture-recapture techniques have been combined with camera trapping to provide effective estimates of animal population size (*Karanth and Nichols, 1998*) or density (spatially explicit capture-recapture, *Borchers et al, 2014*). However, the requirement for individual recognition can be inhibitive in many monitoring and study designs. *Chandler and Royle (2013)* proposed a method to make use of spatial dependence in observations without the need for individual recognition to make inferences about individual distribution and density.
+
+Another framework was proposed *Rowcliffe et al 2008*, which they deemed the Random Encounter Model (REM). The REM posits that the camera trapping rate (number of contacts between camera traps and animals during a unit of time) is function of animal movement speed, animal density, and the area that camera traps are able to successfully detect animals. Using field data, *Rowcliffe et al 2008* provide field evidence that the REM performed well in the density estimation of three of four ungulate species. Subsequent research has focused on methods to estimate the required parameters of this model: the area of camera detection (e.g. *Rowcliffe et al 2011*, *Caravaggi et al 2016*) and the animal movement speed (or daily travel distance) (*Rowcliffe et al 2016*).
+
+Given the difficulty in adequatly measuring animal movement speeds, *Nakashima et al 2019* proposed an alternative, but closely related, approach to estimating density using an animals' staying time in the camera field of view (REST). Similar to the REM, their approach to density estimation relies on the random encounter of animals within a prescribed zone of camera detection. However, they describe how the staying time in front of the camera is inversely proportional to movement speeds and can thus be substituted as a model parameter. Given the improvement in camera technology, observation of animal behaviour and thus measurment of staying time is becoming easier.
+
+In this paper we describe the use of the REST model on camera trap data collected by a long-term large-scale biodiversity monitoring program. We propose several modifications to the REST model, and report on how sampling effort influences expected precision of density estimates for various mammal species of the province. We also compare density estimates derived via the REST approach to more traditional methods such as aerial surveys.
 
 ---
 
 # Model Framework
 
-(simple explanation ie introduction from Dave's paper)
+(simple explanation, i.e. introduction from Dave's paper)
 
 Density is the number of objects (trees, animals, etc.) per unit area. If a 100-m$^2$ plot contains one tree, the density is 1 tree/100-m$^2$, or 10,000 trees per km$^2$. Similarly, if a camera has a field-of-view of 100-m$^2$ and there is always one animal in the field-of-view for the whole time that the camera is operating, the density of that species is 1 animal per 100-m$^2$, or 10,000 animals per km$^2$. It doesn’t matter if the animal is moving around within the field-of-view, as long as it stays in the field-of-view for the whole time. On the other hand, if that camera only has an animal in the field-of-view 1/10,000 of the time that it is operating, there is 1/10,000 animal per 100-m$^2$, or 1 animal per km-$^2$.  If the camera has two animals together for 1/10,000 of the time, this gives 2/10,000 animals per 100-m$^2$, or 2 animals per km-$^2$. 
 
@@ -196,9 +101,19 @@ The units are animal-seconds per area-seconds, which equates to animals per area
 
 *Nakashima et al (2019)* were first to describe how density of an animal can be derived from the number of encounters with the camera and the staying time within the camera field of view (i.e. detection zone), and we apply their method ('REST') here. However, we introduce two modifications:
 
-1. Unlike the cameras used by *Nakashima et al (2019)*, images are collected by the ABMI field program rather than video clips. We describe a procedure to convert images taken at discrete intervals to records to a continuous measure, which is required in order to accurately measure the staying time in front of the camera, accounting for uncertainty in animal presence between images.
+1. Unlike the cameras used by *Nakashima et al (2019)*, images are collected rather than video clips. We describe a procedure to convert images taken at discrete intervals to records to a continuous measure, which is required in order to measure the staying time in front of the camera, accounting for uncertainty in animal presence between images.
 
-1. Several studies have pointed out the importance of proper estimating the detection zone in front of the camera (*Rowcliffe et al 2008*; *Rowcliffe et al 2011*; *Hofmeester et al 2017*). 
+1. Several studies have highlighted the importance of properly estimating the detection zone in front of the camera (*Rowcliffe et al 2008*; *Rowcliffe et al 2011*; *Hofmeester et al 2017*). Following the procedure proposed in *Hofmeester et al 2017*, we place a pole 5-m away from the camera and record whether the animal captured in the image is in front of or behind the pole. This data is used to develop models of the effective detection distance of the camera, which varies by species, habitat type, and season. 
+
+In order to use this model to give absolute density of a species, the following assumptions are made:
+
+1. In order to make inferences about density over a larger region, the cameras must form a random or otherwise representative sample.
+
+1. Animals are not attracted to or repelled by the cameras, and they do not change their behaviour (i.e. time spent in front of the camera) because of the cameras.
+
+1. The method to estimate detection distances in different habitats assumes that the animal is certain to be detected within the 5-m band.
+
+The practical implications of these assumptions, and their potential violation, are discussed throughout and in the Discussion section at the end of paper. 
 
 ---
 
@@ -227,14 +142,15 @@ We used this data to develop models of the probability of a species leaving the 
 
 plot1 <- df_gapcheck %>%
   filter(common_name %in% Sp) %>%
-  mutate(common_name = fct_infreq(common_name)) %>%
+  # mutate(common_name = fct_infreq(common_name)) %>%
   ggplot(aes(x = diff_time, y = left, color = common_name)) +
   geom_jitter(height = 0.1, size = 1, alpha = 0.4) +
-  geom_line(data = mod_gapcheck_sub, aes(x = seconds, y = pred), color = "black", size = 1) +
-  facet_wrap(~common_name, nrow = 3) +
+  geom_line(data = (mod_gapcheck_sub %>% filter(common_name %in% Sp)),
+            aes(x = seconds, y = pred), color = "black", size = 1) +
+  facet_wrap(~common_name, nrow = 2) +
   scale_y_continuous(labels = c("Stayed", 0.2, 0.4, 0.6, 0.8, "Left"), breaks = seq(0, 1, 0.2)) +
   scale_x_continuous(breaks = seq(20, 120, by = 20), limits = c(20, 120)) +
-  scale_color_brewer(palette = "Dark2") +
+  scale_color_viridis_d() +
   labs(y = "Probability of Having Left", 
        x = "Gap Length (s)", 
        title = "Did the animal leave the camera field of view?",
@@ -243,7 +159,7 @@ plot1 <- df_gapcheck %>%
   theme(legend.position = "none",
         strip.text = element_text(color = "black"))
 
-plot1
+include_graphics(here("./docs/pics/plot1.png"))
 
 ```
 
@@ -283,8 +199,6 @@ Models were developed for eleven species groups and eight broad habitat types: d
 
 ```{r}
 
-df_edd_final <- read_csv(paste0(mbhd, "processed/detection_distance/predictions/edd_species_site_season_prelim.csv"))
-
 distgroup_labels <- as_labeller(c(`BigForestCarnivores` = "Wolves",
                                 `BigForestUngulates` = "Moose",
                                 `CoyoteFox` = "Coyotes",
@@ -296,33 +210,72 @@ plot2 <- df_edd_final %>%
   select(-DeploymentYear) %>%
   distinct() %>%
   ggplot(aes(x = VegHF, y = edd, fill = Season)) +
-  geom_col(position = "dodge") +
-  facet_wrap(~ dist_group, nrow = 3, labeller = distgroup_labels) +
+  geom_col(position = "dodge", color = "black") +
+  facet_wrap(~ dist_group, nrow = 2, labeller = distgroup_labels) +
   scale_fill_manual(values = c("#de9b71","#81a9ad")) +
-  #guides(fill = guide_legend(title.position = "top",
-  #                           label.position = "right",
-  #                           nrow = 2)) +
+  scale_y_continuous(limits = c(0, 12), breaks = seq(0, 12, 3)) +
   theme_light() +
   labs(x = "",
        y = "",
-       title = "Estimated Effective Detection Distance (EDD) by Species, Habitat, and Season.") +
+       title = "Estimated Effective Detection Distance (EDD) by Species, Habitat,\nand Season (metres).") +
   theme(legend.position = "bottom",
         legend.direction = "horizontal",
-        plot.title = element_text(margin = margin(0, 0, 20, 0)), 
+        legend.text = element_text(size = 12),
+        panel.spacing.x = unit(0.7, "cm"),
+        panel.spacing.y = unit(0.3, "cm"),
+        plot.title = element_text(margin = margin(0, 0, 15, 0)), 
         axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 10),
         panel.grid.minor.y = element_blank(),
         panel.grid.major.x = element_blank(),
-        strip.text = element_text(color = "black"))
+        strip.text = element_text(color = "black", size = 10),
+        legend.box.margin = margin(-10, -10, -10, -10))
 
-plot2
+include_graphics(here("./docs/pics/plot2.png"))
 
 ```
+
+## Total Camera Operating Time
+
+Here we briefly discuss patterns of field deployment and operation time of ABMI cameras. 
 
 ---
 
 # Results
 
+We present our deployment-level results of density for the six species of interest, methods to scale up density to an area of interest, expected precision using simulation, and present a simple habitat assoication model as another potential use for the relative density index. 
 
+## Deployment-level density estimates
+
+The distributions of density estimates of species at deployments are extremely skewed, with a large majority of deployments having none of a species, some deployments having low densities (one or a few individuals passing by) while a few have very high values (one or more individuals spending long periods in front of a particular camera).
+
+```{r}
+
+plot3 <- df_density %>%
+  filter(common_name %in% Sp,
+         str_detect(DeploymentYear, "^ABMI")) %>%
+  group_by(DeploymentYear, common_name) %>%
+  summarise(density = mean(cpue_km2)) %>%
+  #left_join(df_native_top11, by = "common_name") %>%
+  #mutate(common_name = fct_reorder(factor(common_name), images, .desc = TRUE)) %>%
+  ggplot(mapping = aes(x = density, fill = common_name)) +
+    geom_histogram(bins = 40) +
+    scale_fill_viridis_d(direction = 1) +
+    coord_cartesian(ylim = c(0,250)) +
+    #scale_y_log10() +
+    labs(x = expression(Density~(individuals~per~km^2)),
+         y = "Number of Deployments",
+         title = "Distribution in estimated density at ABMI camera deployments for 6\nexample species.") +
+    facet_wrap(~ common_name, scales = "free") +
+    theme_light() +
+    theme(legend.position = "none",
+          panel.grid.minor = element_blank(),
+          strip.text = element_text(color = "black"))
+
+include_graphics(here("./docs/pics/plot3.png"))
+                       
+
+```
 
 ## Scaling up density estimates
 
@@ -330,16 +283,95 @@ This is where we discuss how to go from deployment-level density -> WMU-level de
 
 ## Expected precision
 
-Here we discuss simulations of precision.
+(Here we discuss the use of simulations to better understand expected precision from various levels of sampling effort, i.e. number of cameras, time in the field). 
+
+Such distributions require large sample sizes to obtain precise estimates – for example, for yearly changes in density in a region or to use for estimating abundances in different habitat types.
 
 ## Comparisons to other methods
 
-Aerial surveys v cameras
+Here we compare camera-derived density estimates to another widely-used method to monitor wildlife populations in Alberta: aerial surveys. Aerial surveys are conducted by the Government of Alberta to report on (primarily) ungulate populations, and results are reported at the Wildlife Management Unit (WMU) level. We obtained estimates of moose density for 34 WMUs conducted from 2014-2019 using distance sampling methodology, and compared them to estimates of moose density measured by ABMI cameras using the REST method. 
+
+* Note: we will be able to add 2019 camera data and 2020 aerial survey data soon.
+
+We fit models of camera density as a function of aerial survey density, including GAMs with smoothing splines using both normal and log-normal (log-link) error distributions, and a linear model both with and without an intercept. Points were weighted in inverse proportion to the width of the camera confidence intervals, which vary widely due to large differences in number of cameras per WMU and inherent variability of camera estimates.
+
+```{r}
+
+m.gam1 <- gam(data = df_comp, Camera.mean ~ s(Aerial.mean, k=6, m=2), family = "gaussian", weights = wt1)
+x<-seq(0,0.75,0.01)
+predmgam1 <- predict(m.gam1, newdata = data.frame(Aerial.mean = x), se.fit = TRUE)
+predline1 <- data.frame(x, predmgam1$fit)
+
+plot4 <- df_comp %>%
+  ggplot(mapping = aes(x = Aerial.mean, y = Camera.mean)) +
+  geom_smooth(method = "lm", se = FALSE, aes(color = "Linear"), size = 2) +
+  geom_line(data = predline1, mapping = aes(x = x, y = predmgam1.fit, color = "GAM"),
+            size = 2) +
+  geom_point(size = 3) +
+  theme_light() +
+  labs(x = expression(Aerial~Density~(per~km^2)),
+       y = expression(Camera~Density~(per~km^2)),
+       color = "Model:",
+       title = "Comparison of moose density estimates between two monitoring methods.") +
+       #subtitle = "Aerial ungulate surveys and remote cameras") + #,
+       #caption = "The linear model has an adjusted R-squared value of 0.68") +
+  scale_x_continuous(breaks = seq(0,0.8,0.1)) +
+  scale_y_continuous(breaks = seq(0,3,0.5)) +
+  theme(axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 13),
+        legend.position = "bottom",
+        plot.title = element_text(size = 14, margin = margin(0, 0, 10, 0)),
+        panel.grid.minor = element_blank())
+
+include_graphics(here("./docs/pics/plot4.png"))
+
+```
+
+There is a general positive relationship between camera estimates and aerial-survey estimates of moose across WMU’s, but wide scatter as densities increase. Because the models produced similar results and the linear model without intercept is the simplest for calibration, we use that model. The calibration coefficient, 1/slope of the linear model without intercept, is 0.406 (90% CI’s: 0.341-0.503). That means that the aerial estimate for moose density in a WMU is 0.406 times the camera estimate. Equivalently, the camera estimate is 2.46 times higher than the aerial estimate. 
+
+The substantial overestimation of moose densities by cameras (assuming the aerial densities are close to the true value) is expected. ABMI cameras are put in open micro-habitats so that vegetation doesn’t hide animals for at least 5m; moose prefer those open areas for foraging, particularly in summer. Additionally, moose are clearly attracted to the cameras themselves, often going right up to the camera to investigate it. This inflates densities estimates by increasing the time that moose spend in the camera’s field-of-view and also reducing the effective detection distance that shows what area the camera is surveying.
+
++ Lynx in the Yukon?
+
++ Snowshoe hares?
 
 ## Habitat association modeling
 
 Results of habitat association modeling
 
+For habitat modeling, we find that the density estimates are best treated as a compound distribution of presence/absence – modeling how the 0 records differ from the non-0 records – and of abundance where the species is present – explaining variation in abundance where the species was recorded. We model presence/absence with the typical logit-linked binomial model, and the abundance-given-presence distribution with a log-normal distribution, which fits most of the species’ distributions reasonably well. This compound distribution is the same as a zero-inflated log-normal distribution, but explicitly treating the two components separately allows more flexible modeling and critical examination of each component.
+
+```{r}
+
+plot5 <- df_density %>%
+  filter(common_name %in% Sp,
+         str_detect(DeploymentYear, "^ABMI")) %>%
+  group_by(DeploymentYear, common_name) %>%
+  summarise(density = mean(cpue_km2)) %>%
+  #left_join(df_native_top11, by = "common_name") %>%
+  #mutate(common_name = fct_reorder(factor(common_name), images, .desc = TRUE)) %>%
+  # Filter out deployments with density of 0
+  filter(density > 0) %>%
+  ggplot(mapping = aes(x = density, fill = common_name)) +
+    geom_histogram(bins = 30) +
+    scale_fill_viridis_d(direction = -1) +
+    scale_x_log10(labels = scales::number_format(accuracy = 0.1)) +
+    labs(x = expression(Density~(individuals~per~km^2)),
+         y = "Number of Deployments",
+         title = "Log-normal distribution of density using only presence records for 6 example\nspecies.") +
+    facet_wrap(~ common_name, scales = "free_x") +
+    theme_light() +
+    theme(legend.position = "blank",
+          panel.grid.minor = element_blank(),
+          strip.text = element_text(color = "black"))
+
+include_graphics(here("./docs/pics/plot5.png"))
+
+```
+
+Following this up with how we would build a habitat association for, say, Moose.
 
 ---
 
@@ -347,331 +379,45 @@ Results of habitat association modeling
 
 ## Advantages
 
-1. Not computationally intensive, doesn't require individual demarcation. 
+1. Relaxes requirements for recognizing individual demarcation, estimation of movement speed, and home range size.
+1. Not computationally intensive.
+1. Evidence that the REST method can provide unbiased estimates of animal density. 
 
 ## Limitations
 
-1. Poor method for tracking rare species.
-
+1. Poor method for monitoring rare species (and herding species?) as high sampling effort required for precise results.
+1. Assumptions may be violated in real-world practice; estimates may then still be useful as a measure of *relative* density. 
 
 ---
 
 # References
 
+Borchers, D., Distiller, G., Foster, R., Harmsen, B., & Milazzo, L. (2014). Continuous‐time spatially explicit capture–recapture models, with an application to a jaguar camera‐trap survey. Methods in Ecology and Evolution, 5(7), 656-665 https://doi.org/10.1111/2041-210X.12196.
 
-Literature is this so far: 
+Burton, A. C., Neilson, E., Moreira, D., Ladle, A., Steenweg, R., Fisher, J. T., ... & Boutin, S. (2015). Wildlife camera trapping: a review and recommendations for linking surveys to ecological processes. Journal of Applied Ecology, 52(3), 675-685. https://doi.org/10.1111/1365-2664.12432.
 
-- *Nakashima et al (2019)*
+Chandler, R. B., & Royle, J. A. (2013). Spatially explicit models for inference about density in unmarked or partially marked populations. The Annals of Applied Statistics, 7(2), 936-954. https://doi.org/10.1214/12-AOAS610.
 
-Captures staying time as video; for those researchers who use cameras without video, we describe a procedure to turn series of images taken at discrete intervals into a proxy for a continuous record.  
+Foster, R. J., & Harmsen, B. J. (2012). A critique of density estimation from camera‐trap data. The Journal of Wildlife Management, 76(2), 224-236. https://doi.org/10.1002/jwmg.275.
 
-- *Rowcliffe et al (2008)* - REM
+Hofmeester, T. R., Rowcliffe, J. M., & Jansen, P. A. (2017). A simple method for estimating the effective detection distance of camera traps. Remote Sensing in Ecology and Conservation, 3(2), 81-89. https://doi.org/10.1002/rse2.25.
 
-The Random Encounter Model (REM) provides a means to estimate abundance from camera trap rate, but requires camera sensitivity to be quantified.
+Karanth, K. U., & Nichols, J. D. (1998). Estimation of tiger densities in India using photographic captures and recaptures. Ecology, 79(8), 2852-2862. https://doi.org/10.1890/0012-9658(1998)079[2852:EOTDII]2.0.CO;2.
 
-Studies using these methods rely on camera placements at random positions, which ensures random movement of animals relative to the camera position.
+Kays, R., Arbogast, B. S., Baker‐Whatton, M., Beirne, C., Boone, H. M., Bowler, M., ... & Gonçalves, A. L. S. (2020). An empirical evaluation of camera trap study design: how many, how long, and when?. Methods in Ecology and Evolution. https://doi.org/10.1111/2041-210X.13370.
 
-No individual recognition required. Need to account for imperfect detection. 
+Nakashima, Y., Fukasawa, K., & Samejima, H. (2018). Estimating animal density without individual recognition using information derivable exclusively from camera traps. Journal of Applied Ecology, 55(2), 735-744. https://doi.org/10.1111/1365-2664.13059.
 
-- *Rowcliffe et al (2011)* - Defines the area in which the number of detections is maximized. 
+Pfeffer, S. E., Spitzer, R., Allen, A. M., Hofmeester, T. R., Ericsson, G., Widemo, F., ... & Cromsigt, J. P. (2018). Pictures or pellets? Comparing camera trapping and dung counts as methods for estimating population densities of ungulates. Remote Sensing in Ecology and Conservation, 4(2), 173-183. https://doi.org/10.1002/rse2.67.
 
-In this paper a method for estimating species- and survey-specific dimensions of the camera trap detection zone. Detection probability is a function of animal position relative to the camera. 
+Rowcliffe, J. M., Field, J., Turvey, S. T., & Carbone, C. (2008). Estimating animal density using camera traps without the need for individual recognition. Journal of Applied Ecology, 45(4), 1228-1236. https://doi.org/10.1111/j.1365-2664.2008.01473.x.
 
-- Sollmann et al (2013) - bit of a skeptic. Sounds the alarm for needing EDD. 
+Rowcliffe, J. M., Carbone, C., Jansen, P. A., Kays, R., & Kranstauber, B. (2011). Quantifying the sensitivity of camera traps: an adapted distance sampling approach. Methods in Ecology and Evolution, 2(5), 464-476. https://doi.org/10.1111/j.2041-210X.2011.00094.x.
 
-- *Hofmeester et al (2017)*
+Sollmann, R., Mohamed, A., Samejima, H., & Wilting, A. (2013). Risky business or simple solution–Relative abundance indices from camera-trapping. Biological Conservation, 159, 405-412. https://doi.org/10.1016/j.biocon.2012.12.025.
 
-Estimating the effective detection distance of camera traps. Correcting for different capture rates.
-Many camera-trapping studies do not correct for differences between habitats, implicitly assuming that sampling efficiency of camera traps is constant across habitats. 
-Recommend five distance intervals, at minimum. 
+Steenweg, R., Hebblewhite, M., Kays, R., Ahumada, J., Fisher, J. T., Burton, C., ... & Brodie, J. (2017). Scaling‐up camera traps: Monitoring the planet's biodiversity with networks of remote sensors. Frontiers in Ecology and the Environment, 15(1), 26-34. https://doi.org/10.1002/fee.1448.
 
-- *Pfeffer et al (2017)* - used REM, with EDD incorporated. Three distance markers. 
-
-What we are doing is piecing together a new approach. 
-
----
-
-
-The components are thus:
-
-1. Organize images into series
-
-Develop rule set for what constitutes a 'series', which is a continuous set of images. Images < 120 seconds are considered part of a series. Ideally images >20s and <120s would each be checked for evidence of leaving the field of view, but this is impractical given the large volume of data and limited resources checking. Therefore, we've developed an automated process based on a study of images in 2015, and have developed models for probabilistic gaps that can be applied to big datasets.
-
-```{r}
-
-
-
-```
-
-
-2. Calculate total time spent in front of the camera at each deployment
-
-- rule sets for adding time to each series before the first image and after the last image.
-- probabilistic time assignment
-- sum the time together
-
-3. Model the effective detection distance of the cameras
-
-- Adjusted for species, habitat type, and season.
-
-
-
-Ideas for next time:
-- Use WTD
-- Plot out the binomial GAM results (not sure how?) - by habitat, season ...
-- 
-
-Make sure to cite *Buckland et al 2015* - distance sampling. EDD formula. 
-
-```{r}
-
-# Prepare subset of data for effective detection distance (EDD) modeling
-
-df_distance <- df_native_all %>%
-  # Clean up "NA" characters (confusing) - replace with "X"
-  mutate(distance = str_replace_all(distance, "NA", "X"),
-         distance = str_replace_all(distance, "NA, NA", "X, X"),
-         distance = str_replace_all(distance, "NA, NA, NA", "X, X, X")) %>%
-  # Make columns of number of individuals at each pole position
-  mutate(PoleAt = str_count(distance, "A"),
-         PoleBehind = str_count(distance, "B"),
-         PoleFront = str_count(distance, "F"),
-         PoleIC = str_count(distance, "IC"),
-         PoleIP = str_count(distance, "IP"),
-         PoleNA = str_count(distance, "X")) %>%
-  select(deployment:common_name, sex, age_class, number_individuals, distance:PoleNA) %>%
-  filter(!is.na(distance)) %>%
-  # Join in lure information
-  left_join(df_cam_lure, by = c("deployment", "Year" = "year")) %>%
-  # Create variable for Julian date
-  mutate(Julian = as.numeric(format(ymd_hms(date_time_taken), "%j"))) %>%
-  # Filter out lured deployments - only use unlured for detection distance models.
-  filter(Lure == "n")
-
-# Retrieve vegetation and human footprint information for each deployment
-df_distance_veghf <- df_veghf_detdist %>%
-  select(deployment, year, DeploymentYear, VegForDetectionDistance) %>%
-  # Get rid of WetShrub - not used for modeling.
-  mutate(VegHF = ifelse(VegForDetectionDistance == "WetShrub", 
-                        "Shrub", VegForDetectionDistance)) %>%
-  select(-VegForDetectionDistance) %>%
-  # Join to distance information.
-  right_join(df_distance, by = c("deployment", "year" = "Year")) %>%
-  mutate(date_time_taken = ymd_hms(date_time_taken)) %>%
-  # Join in EDD species grouping lookup
-  left_join(df_dist_groups, by = "common_name") %>%
-  # Join alternative VegHF categories to try in the modeling
-  left_join(df_veg_lookup, by = "VegHF")
-
-df_edd_train <- df_distance_veghf %>%
-  # Sum total individuals in each of PoleAt through PoleIP
-  mutate(n = rowSums(select(., PoleAt:PoleNA))) %>%
-  filter(!is.na(VegHF)) %>%
-  # Only use records where number_individuals = PoleBehind or PoleFront
-  filter(n == PoleBehind | n == PoleFront) %>%
-  # Create season variable based on julian day
-  mutate(Season = as.factor(ifelse(Julian >= summer.start.j & Julian <= summer.end.j, "Summer", "Winter")),
-         pBehind = PoleBehind / n) %>%
-  select(deployment, year, VegHF, VegHF1:VegHF5, common_name, dist_group, n, pBehind, Season)
-
-mod_edd <- df_edd_train %>%
-  # Get rid of Pronghorn and Bighorn Sheep - too few obs (for now)
-  filter(dist_group != "Pronghorn",
-         dist_group != "Bighorn sheep") %>%
-  group_by(dist_group) %>%
-  nest() %>%
-  # Various EDD models w/ vegHF groupings and season
-  mutate(
-    # Null model
-    m1 = map(.x = data, .f = ~ gam(formula = pBehind ~ 1, weights = n, data = .x, family = "binomial")),
-    # VegHF groupings only models
-    m2 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF, weights = n, data = .x, family = "binomial")),
-    m3 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF1, weights = n, data = .x, family = "binomial")),
-    m4 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF2, weights = n, data = .x, family = "binomial")),
-    m5 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF3, weights = n, data = .x, family = "binomial")),
-    m6 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF4, weights = n, data = .x, family = "binomial")),
-    m7 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF5, weights = n, data = .x, family = "binomial")),
-    # Season only model
-    m8 = map(.x = data, .f = ~ gam(formula = pBehind ~ Season, weights = n, data = .x, family = "binomial")),
-    # Season + VegHF groupings
-    m9 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF + Season, 
-                                   weights = n, data = .x, family = "binomial")),
-    m10 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF1 + Season, 
-                                    weights = n, data = .x, family = "binomial")),
-    m11 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF2 + Season, 
-                                    weights = n, data = .x, family = "binomial")),
-    m12 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF3 + Season, 
-                                    weights = n, data = .x, family = "binomial")),
-    m13 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF4 + Season, 
-                                    weights = n, data = .x, family = "binomial")),
-    m14 = map(.x = data, .f = ~ gam(formula = pBehind ~ VegHF5 + Season, 
-                                    weights = n, data = .x, family = "binomial")))
-
-# Calculate BIC to determine weightings for each model
-df_edd_bic <- mod_edd %>%
-  # Calculate BIC for each species distance group
-  mutate(bic.ta = pmap(list(m1,m2,m3,m4,m5,m6,m7,m8,m9,m10,m11,m12,m13,m14), .f = BIC)) %>%
-  select(dist_group, data, bic.ta) %>%
-  mutate(bic.delta = map(.x = bic.ta, .f = ~ .$BIC - min(.$BIC))) %>%
-  mutate(bic.exp = map(.x = bic.delta, .f = ~ exp((-1/2) * .x))) %>%
-  mutate(bic.wt = map(.x = bic.exp, .f = ~ .x / sum(.x))) %>%
-  mutate(best_model = map_dbl(.x = bic.wt, .f = ~ which.max(.x))) %>%
-  select(dist_group, bic.wt, best_model)
-
-# Data to use to make predictions - all deployments w/ all VegHF, season, and distance group combinations. 
-df_edd_test <- df_veghf_detdist %>%
-  # WetShrub not used in modeling.
-  mutate(VegHF = ifelse(VegForDetectionDistance == "WetShrub", "Shrub", VegForDetectionDistance)) %>%
-  left_join(df_veg_lookup, by = "VegHF") %>%
-  select(DeploymentYear, VegHF, VegHF1:VegHF5) %>%
-  # Include both summer and winter options for each deployment
-  crossing(Season = c("Summer", "Winter")) %>%
-  # Expand each deployment record for each distance group
-  crossing(dist_group = mod_edd$dist_group) %>%
-  # Nest the data by distance group
-  group_nest(dist_group, .key = "pred_data")
-
-# Species group with full set of VegHF categories - still under development here. 
-SpGroups <- c("WTDeer", "CoyoteFox", "Mule deer", 
-              "BigForestCarnivores", "BigForestUngulates")
-
-# Run predictions, store in list column
-df_edd_pred <- df_edd_test %>%
-  # Join in models
-  left_join(mod_edd, by = "dist_group") %>%
-  # Only distance groups with all VegHF categories 
-  filter(dist_group %in% SpGroups) %>%
-  # Create predictions
-  mutate(pred1 = map2(m1, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred2 = map2(m2, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred3 = map2(m3, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred4 = map2(m4, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred5 = map2(m5, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred6 = map2(m6, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred7 = map2(m7, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred8 = map2(m8, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred9 = map2(m9, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred10 = map2(m10, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred11 = map2(m11, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred12 = map2(m12, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred13 = map2(m13, pred_data, .f = ~ predict(.x, newdata = .y)),
-         pred14 = map2(m14, pred_data, .f = ~ predict(.x, newdata = .y))) %>%
-  select(dist_group, pred1:pred14) %>%
-  pivot_longer(cols = pred1:pred14, names_to = "model", values_to = "predictions") %>%
-  arrange(dist_group)
-
-# Add BIC information, create adjusted predictions with BIC weighting, and calculate EDD
-df_edd_pred_adj <- df_edd_bic %>%
-  unnest(bic.wt) %>%
-  filter(dist_group %in% SpGroups) %>%
-  arrange(dist_group) %>%
-  bind_cols(df_edd_pred) %>%
-  # Predictions adjusted by BIC weighting
-  mutate(predictions_adj = map2(.x = bic.wt, .y = predictions, .f = ~ .x * .y)) %>%
-  select(dist_group, predictions_adj) %>%
-  unnest_wider(predictions_adj) %>%
-  group_by(dist_group) %>%
-  summarise_all(funs(sum)) %>%
-  pivot_longer(cols = c(-dist_group)) %>%
-  mutate(value1 = plogis(value))
-  # Calculate EDD
-  mutate(edd = 5 / sqrt(1 - plogis(value)))
-
-```
-
-```{r}
-
-df_edd_train_wtd <- df_edd_train %>%
-  filter(dist_group == "WTDeer") %>%
-  mutate(VegHF_0 = as.factor(VegHF))
-
-# Build WTD model
-mod1 <- gam(formula = pBehind ~ VegHF_0, weights = n, data = df_edd_train_wtd, family = "binomial")
-
-summary(mod1)
-
-plot(mod1, all.terms = T, residuals = T)
-test <-confint(mod1)
-
-ggplot(data = )
-
-broom::tidy(mod1, parametric = T, conf.int = T, conf.level = 0.9)
-
-```
-
-4. Calculate the total camera operating time
-
-
-5. Calculate density.
-
-Viola! Looks at some plots for the six species of interest?
-
----
-
-# Field Data
-
-Introduction to ABMI's data collection efforts to date, including high level details about sampling design.
-
-- The ABMI samples along a grid of the province. At each site, four cameras are placed randomly. 
-
-We're going to focus on ... moose, white-tailed deer, black bears, coyotes, lynx, snowshoe hare. This was discretionary. Do folks have a different preference here?
-
-Maps, plots, tables:
-- Detections, occurrences
-- Model for probabilistic gaps
-
----
-
-# Results
-
-```{r}
-
-
-```
-
-
---
-
-# Comparison to other measures of density
-
-- Aerial surveys (WMU moose, Elk Island?)
-- Lynx
-- Bunny stuff
-
-```{r}
-
-library(abmi.camera.extras)
-
-```
-
---
-
-# Expected precision of density estimates
-
-Monte Carlo simulations 
-
-```{r}
-
-
-
-```
-
----
-
-# Habitat Association Modeling
-
-
-Various modeling that can be done - hope to get more recent data soon.
-
-```{r}
-
-
-
-```
-
-# References
-+ *Kays et al, 2020*
 
 
 

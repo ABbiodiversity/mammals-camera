@@ -50,16 +50,16 @@ library(ggplot2) # visualizations
 library(here)
 
 # Path to data folder on ABMI Science Centre S: drive
-abmisc <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+#root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
 # Path to data folder on MB's external hardrive 
-mbhd <- "D:/SC-Camera-Mammals/data/"
+root <- "D:/SC-Camera-Mammals/data/"
 
 # Import data
-df_gapcheck <- read_csv(paste0(mbhd, "processed/probabilistic-gaps/gap-check.csv"))
-mod_gapcheck_sub <- read_csv(paste0(mbhd, "processed/probabilistic-gaps/gap-mod.csv"))
-df_edd_final <- read_csv(paste0(mbhd, "processed/detection_distance/predictions/edd_species_site_season_prelim.csv"))
-df_density <- read_csv(paste0(mbhd, "processed/density/density-by-season-deployment-species.csv"))
-df_comp <- read_csv(paste0(mbhd, "supplemental/aerial-camera-combined_2014-19.csv")) %>%
+df_gapcheck <- read_csv(paste0(root, "processed/probabilistic-gaps/gap-check.csv"))
+mod_gapcheck_sub <- read_csv(paste0(root, "processed/probabilistic-gaps/gap-mod.csv"))
+df_edd_final <- read_csv(paste0(root, "processed/detection_distance/predictions/edd_species_site_season_prelim.csv"))
+df_density <- read_csv(paste0(root, "processed/density/density-by-season-deployment-species.csv"))
+df_comp <- read_csv(paste0(root, "supplemental/aerial-camera-combined_2014-19.csv")) %>%
   mutate(wt1 = sqrt(Camera.n))
 
 # Example species

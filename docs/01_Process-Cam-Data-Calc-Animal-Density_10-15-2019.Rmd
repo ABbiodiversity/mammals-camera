@@ -44,7 +44,8 @@ library(mgcv)
 library(grid)
 
 # Path to data folder on ABMI Science Centre S: drive
-abmisc <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+#root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+root <- "D:/SC-Camera-Mammals/data/"
 
 # Set knitr chunk options
 opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE)
@@ -56,7 +57,7 @@ opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE)
 # Raw data
 
 # Raw native mammal data (2013-2018):
-df_native_all <- read_csv(paste0(abmisc,"base/ALL_native-mammals_09-01-2019.csv"),
+df_native_all <- read_csv(paste0(root,"base/ALL_native-mammals_09-01-2019.csv"),
                           col_types = cols(distance = col_character(),
                                            number_during_gap = col_number(),
                                            number_individuals = col_character()),
@@ -65,7 +66,7 @@ df_native_all <- read_csv(paste0(abmisc,"base/ALL_native-mammals_09-01-2019.csv"
 # Lookup tables
 
 # Species gap groups:
-df_gap_groups <- read_csv(paste0(abmisc,"lookup/species-gap-groups.csv")) %>%
+df_gap_groups <- read_csv(paste0(root,"lookup/species-gap-groups.csv")) %>%
   # Name the groups for clarity
   mutate(gap_group = case_when(
     gap_group == 1 ~ "Most ungulates",
@@ -76,33 +77,39 @@ df_gap_groups <- read_csv(paste0(abmisc,"lookup/species-gap-groups.csv")) %>%
     gap_group == 6 ~ "Small mammals"))
 
 # Camera operating dates/times:
-df_cam_startend <- read_csv(paste0(abmisc,"lookup/camera-startend-all.csv")) %>%
+df_cam_startend <- read_csv(paste0(root,"lookup/camera-startend-all.csv")) %>%
   mutate(DeploymentYear = paste(deployment, year, sep ="_")) %>%
   select(DeploymentYear, deployment, year, StartTime, EndTime)
 
 # Camera operating timeframes (wide):
+<<<<<<< HEAD
 time.since.2009 <- read_csv(paste0(abmisc,"processed/dave-objects/Camera operating days since 2009 Feb 2019 ALL.csv"))
 time.by.day <- read_csv(paste0(abmisc, "processed/dave-objects/Camera operating days Feb 2019 ALL.csv"))
 df_tbd_summary <- read_csv(paste0(abmisc,"processed/dave-objects/Summary of camera operating days Feb 2019 ALL.csv"))
+=======
+time.since.2009 <- read_csv(paste0(root,"processed/dave-objects/Camera operating days since 2009 Feb 2019 ALL.csv"))
+time.by.day <- read_csv(paste0(root, "processed/dave-objects/Camera operating days Feb 2019 ALL.csv"))
+df_tbd_summary <- read_csv(paste0(root,"processed/dave-objects/Summary of camera operating days Feb 2019 ALL.csv"))
+>>>>>>> c57b750e30370097a40d19c9c80bdda866c377c1
 
 # Lure information for all deployments:
-df_cam_lure <- read_csv(paste0(abmisc,"lookup/camera-lure-info-all.csv"))
+df_cam_lure <- read_csv(paste0(root,"lookup/camera-lure-info-all.csv"))
 
 # Species distance groups:
-df_dist_groups <- read_csv(paste0(abmisc,"lookup/species-distance-groups.csv"))
+df_dist_groups <- read_csv(paste0(root,"lookup/species-distance-groups.csv"))
 
 # Vegetation and Human Footprint (HF) information for each deployment:
-df_veghf_detdist <- read_csv(paste0(abmisc,"lookup/camera-soilveghf-detdist-all.csv"))
+df_veghf_detdist <- read_csv(paste0(root,"lookup/camera-soilveghf-detdist-all.csv"))
 
 # Veg-HF groupings for detection distance models:
-df_veg_lookup <- read_csv(paste0(abmisc,"lookup/veg-pole-distance.csv"))
+df_veg_lookup <- read_csv(paste0(root,"lookup/veg-pole-distance.csv"))
 
 # Spatial data for interactive maps
-sf_nr <- st_read(paste0(abmisc,"base/spatial/ab_naturalregions.shp"), 
+sf_nr <- st_read(paste0(root,"base/spatial/ab_naturalregions.shp"), 
                  quiet = TRUE, stringsAsFactors = FALSE)
-sf_ab <- st_read(paste0(abmisc,"base/spatial/ab_prov.shp"), 
+sf_ab <- st_read(paste0(root,"base/spatial/ab_prov.shp"), 
                  quiet = TRUE, stringsAsFactors = FALSE)
-abmi_dep <- st_read(paste0(abmisc,"base/spatial/abmi_deployments_public.shp"), 
+abmi_dep <- st_read(paste0(root,"base/spatial/abmi_deployments_public.shp"), 
                     quiet = TRUE, stringsAsFactors = FALSE)
 
 ```
@@ -655,11 +662,14 @@ The next step is to add time before the first photo and after the last photo, wh
 
 ```{r}
 
+# Bring in tbi_all, which includes data from 2019 CMU
+df_tbi_all <- read_csv(paste0(root, "processed/time-btwn-photos/tbi-all_2020-04-17.csv"))
+
 # Calculate total time in front of camera, including time before the first and after the last image.
 
 df_tfs_final <- df_series_3 %>%
   # Add tbi information
-  left_join(df_tbi, by = "common_name") %>%
+  left_join(df_tbi_all, by = "common_name") %>%
   select(series_num, common_name, time_btwn_photos) %>%
   distinct() %>%
   # Join to previous time calculation (both single- and multiple series) 
@@ -701,7 +711,8 @@ df_series_4 <- df_series_3 %>%
   filter(row_number() == 1) %>%
   left_join(df_n_ani, by = "series_num") %>%
   left_join(df_tfs_final, by = c("series_num", "common_name")) %>%
-  mutate(DeploymentYear = paste(deployment, Year, sep = "_")) %>%
+  mutate(DeploymentYear = paste(deployment, Year, sep = "_"),
+         series_total_time = mean_animals * series_total_time) %>%
   select(DeploymentYear, deployment, year = Year, date_time_taken, series_num, 
          n_photos, common_name, sex, age_class, mean_animals, series_total_time) %>%
   ungroup()
@@ -1683,7 +1694,7 @@ Now, we can append EDD information:
 ```{r}
 
 # Load detection distance modeling from above
-load(paste0(abmisc,"processed/detection_distance/predictions/Detection distances by site species and season.rData"))
+load(paste0(root,"processed/detection-distance/predictions/Detection distances by site species and season.rData"))
 
 # Detection distance for each DeploymentYear, SpeciesGroup, and Season combination, tidied.
 df_detdist <- dd %>%
@@ -1724,6 +1735,17 @@ df_density <- df_dens_ing %>%
          cpue_km2 = cpue / 60 / 60 / 24 * 10000)
 
 ```
+
+```{r include=FALSE, echo=FALSE}
+
+# Update master density file
+
+date <- Sys.Date()
+
+write_csv(df_density, paste0(root, "processed/density/density-all_", date, ".csv"))
+
+```
+
 
 # Sampling distribution of species density
 

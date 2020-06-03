@@ -43,9 +43,10 @@ library(crosstalk)
 library(mgcv)
 library(grid)
 
-# Path to data folder on ABMI Science Centre S: drive
-#root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
-root <- "D:/SC-Camera-Mammals/data/"
+# Path to Google Drive folder: 
+root <- "G:/Shared drives/ABMI Camera Mammals/"
+root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+
 
 # Set knitr chunk options
 opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE)
@@ -1668,7 +1669,7 @@ Now, we can append EDD information:
 ```{r}
 
 # Load detection distance modeling from above
-load(paste0(root,"processed/detection-distance/predictions/Detection distances by site species and season.rData"))
+load(paste0(root,"data/processed/detection-distance/predictions/Detection distances by site species and season_2020-05-27.rData"))
 
 # Detection distance for each DeploymentYear, SpeciesGroup, and Season combination, tidied.
 df_detdist <- dd %>%

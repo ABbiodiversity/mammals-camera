@@ -44,8 +44,8 @@ library(mgcv)
 library(grid)
 
 # Path to data folder on ABMI Science Centre S: drive
-#root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
-root <- "D:/SC-Camera-Mammals/data/"
+root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+#root <- "D:/SC-Camera-Mammals/data/"
 
 # Set knitr chunk options
 opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE)
@@ -82,15 +82,10 @@ df_cam_startend <- read_csv(paste0(root,"lookup/camera-startend-all.csv")) %>%
   select(DeploymentYear, deployment, year, StartTime, EndTime)
 
 # Camera operating timeframes (wide):
-<<<<<<< HEAD
-time.since.2009 <- read_csv(paste0(abmisc,"processed/dave-objects/Camera operating days since 2009 Feb 2019 ALL.csv"))
-time.by.day <- read_csv(paste0(abmisc, "processed/dave-objects/Camera operating days Feb 2019 ALL.csv"))
-df_tbd_summary <- read_csv(paste0(abmisc,"processed/dave-objects/Summary of camera operating days Feb 2019 ALL.csv"))
-=======
 time.since.2009 <- read_csv(paste0(root,"processed/dave-objects/Camera operating days since 2009 Feb 2019 ALL.csv"))
 time.by.day <- read_csv(paste0(root, "processed/dave-objects/Camera operating days Feb 2019 ALL.csv"))
 df_tbd_summary <- read_csv(paste0(root,"processed/dave-objects/Summary of camera operating days Feb 2019 ALL.csv"))
->>>>>>> c57b750e30370097a40d19c9c80bdda866c377c1
+
 
 # Lure information for all deployments:
 df_cam_lure <- read_csv(paste0(root,"lookup/camera-lure-info-all.csv"))
@@ -663,7 +658,8 @@ The next step is to add time before the first photo and after the last photo, wh
 ```{r}
 
 # Bring in tbi_all, which includes data from 2019 CMU
-df_tbi_all <- read_csv(paste0(root, "processed/time-btwn-photos/tbi-all_2020-04-17.csv"))
+df_tbi_all <- read_csv("G:/Shared drives/ABMI Camera Mammals/data/processed/time-btwn-images/Table of time between photos within series by species incl 2019 May 2020.csv") %>%
+  rename(common_name = Species, time_btwn_photos = TBP)
 
 # Calculate total time in front of camera, including time before the first and after the last image.
 
@@ -1694,7 +1690,7 @@ Now, we can append EDD information:
 ```{r}
 
 # Load detection distance modeling from above
-load(paste0(root,"processed/detection-distance/predictions/Detection distances by site species and season.rData"))
+load("G:/Shared drives/ABMI Camera Mammals/data/processed/detection-distance/predictions/Detection distances by site species and season.rData")
 
 # Detection distance for each DeploymentYear, SpeciesGroup, and Season combination, tidied.
 df_detdist <- dd %>%

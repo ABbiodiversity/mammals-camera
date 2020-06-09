@@ -43,10 +43,16 @@ library(crosstalk)
 library(mgcv)
 library(grid)
 
+<<<<<<< HEAD
+# Path to data folder on ABMI Science Centre S: drive
+root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+#root <- "D:/SC-Camera-Mammals/data/"
+=======
 # Path to Google Drive folder: 
 root <- "G:/Shared drives/ABMI Camera Mammals/"
 root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
 
+>>>>>>> be4a0397e78396693d8e09844d2b5ee98b44aef5
 
 # Set knitr chunk options
 opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE)
@@ -86,6 +92,7 @@ df_cam_startend <- read_csv(paste0(root,"lookup/camera-startend-all.csv")) %>%
 time.since.2009 <- read_csv(paste0(root,"processed/dave-objects/Camera operating days since 2009 Feb 2019 ALL.csv"))
 time.by.day <- read_csv(paste0(root, "processed/dave-objects/Camera operating days Feb 2019 ALL.csv"))
 df_tbd_summary <- read_csv(paste0(root,"processed/dave-objects/Summary of camera operating days Feb 2019 ALL.csv"))
+
 
 # Lure information for all deployments:
 df_cam_lure <- read_csv(paste0(root,"lookup/camera-lure-info-all.csv"))
@@ -658,7 +665,8 @@ The next step is to add time before the first photo and after the last photo, wh
 ```{r}
 
 # Bring in tbi_all, which includes data from 2019 CMU
-df_tbi_all <- read_csv(paste0(root, "processed/time-btwn-photos/tbi-all_2020-04-17.csv"))
+df_tbi_all <- read_csv("G:/Shared drives/ABMI Camera Mammals/data/processed/time-btwn-images/Table of time between photos within series by species incl 2019 May 2020.csv") %>%
+  rename(common_name = Species, time_btwn_photos = TBP)
 
 # Calculate total time in front of camera, including time before the first and after the last image.
 
@@ -1027,6 +1035,9 @@ df_cam_op_2015 <- time.since.2009 %>%
   as.data.frame() %>%
   rownames_to_column(var = "Date")
 
+# 90% of cameras:
+cam_90 <- floor(max(df_cam_op_2015$.) * 0.9)
+
 days <- seq(as.POSIXct("2009-01-01"), as.POSIXct("2019-03-03"), by = "days")
 
 data.frame(Date = days, Num_Cameras = df_cam_op_2015$.) %>%
@@ -1039,7 +1050,9 @@ data.frame(Date = days, Num_Cameras = df_cam_op_2015$.) %>%
              col = "darkred", size = 1, linetype = 2) +
   geom_vline(xintercept = as.numeric(summer_end15), 
              col = "darkred", size = 1, linetype = 2) +
-  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  #geom_hline(yintercept = cam_90, col = "darkgreen", size = 1) +
+  #annotate("text", x = as.POSIXct("2015-08-15 01:00:00"),
+  #         y = (cam_90 + 20), label = "90% - March 19 to July 1", size = 3) +
   scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
   scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
   annotate("text", 
@@ -1073,6 +1086,9 @@ df_cam_op_2016 <- time.since.2009 %>%
   as.data.frame() %>%
   rownames_to_column(var = "Date")
 
+# 90% of cameras:
+cam_90 <- floor(max(df_cam_op_2016$.) * 0.9)
+
 data.frame(Date = days, Num_Cameras = df_cam_op_2016$.) %>%
   filter(Num_Cameras > 0) %>%
   ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
@@ -1083,7 +1099,9 @@ data.frame(Date = days, Num_Cameras = df_cam_op_2016$.) %>%
              col = "darkred", size = 1, linetype = 2) +
   geom_vline(xintercept = as.numeric(summer_end16), 
              col = "darkred", size = 1, linetype = 2) +
-  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  #geom_hline(yintercept = cam_90, col = "darkgreen", size = 1) +
+  #annotate("text", x = as.POSIXct("2015-12-24 01:00:00"),
+  #         y = (cam_90 + 20), label = "90% - March 20 to June 27", size = 3) +
   scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
   scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
   annotate("text", 
@@ -1117,6 +1135,9 @@ df_cam_op_2017 <- time.since.2009 %>%
   as.data.frame() %>%
   rownames_to_column(var = "Date")
 
+# 90% of cameras:
+cam_90 <- floor(max(df_cam_op_2017$.) * 0.9)
+
 data.frame(Date = days, Num_Cameras = df_cam_op_2017$.) %>%
   filter(Num_Cameras > 0) %>%
   ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
@@ -1127,7 +1148,9 @@ data.frame(Date = days, Num_Cameras = df_cam_op_2017$.) %>%
              col = "darkred", size = 1, linetype = 2) +
   geom_vline(xintercept = as.numeric(summer_end17), 
              col = "darkred", size = 1, linetype = 2) +
-  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  #geom_hline(yintercept = cam_90, col = "darkgreen", size = 1) +
+  #annotate("text", x = as.POSIXct("2016-12-24 01:00:00"),
+  #         y = (cam_90 + 20), label = "90% - March 8 to June 26", size = 3) +
   scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
   scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
   annotate("text", 
@@ -1142,7 +1165,6 @@ data.frame(Date = days, Num_Cameras = df_cam_op_2017$.) %>%
   theme_classic() +
   theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
         axis.title.y = element_text(size = 13, face = "bold"))
-
 
 ```
 
@@ -1162,6 +1184,9 @@ df_cam_op_2018 <- time.since.2009 %>%
   as.data.frame() %>%
   rownames_to_column(var = "Date")
 
+# 90% of cameras:
+cam_90 <- floor(max(df_cam_op_2018$.) * 0.9)
+
 data.frame(Date = days, Num_Cameras = df_cam_op_2018$.) %>%
   filter(Date >= "2017-09-01") %>%
   ggplot(mapping = aes(x = Date, y = Num_Cameras)) +
@@ -1172,7 +1197,9 @@ data.frame(Date = days, Num_Cameras = df_cam_op_2018$.) %>%
              col = "darkred", size = 1, linetype = 2) +
   geom_vline(xintercept = as.numeric(summer_end18), 
              col = "darkred", size = 1, linetype = 2) +
-  # geom_hline(yintercept = 680, col = "darkgreen", size = 1) +
+  #geom_hline(yintercept = cam_90, col = "darkgreen", size = 1) +
+  #annotate("text", x = as.POSIXct("2017-12-24 01:00:00"),
+  #        y = (cam_90 + 20), label = "90% - Feb 26 to June 14", size = 3) +
   scale_x_datetime(date_breaks = "2 months", date_labels = "%b %Y") +
   scale_y_continuous(breaks = seq(0, 800, 100), limits = c(0, 800)) +
   annotate("text", 
@@ -1527,7 +1554,8 @@ plot <- df_edd_final %>%
                              nrow = 2)) +
   theme_light() +
   labs(x = "Landcover Category",
-       y = "Estimated Effective Detection Distance (m)") +
+       y = "",
+       title = "Estimated effective detection distance (m) by species group.") +
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1),
         panel.grid.minor.y = element_blank(),
@@ -1669,7 +1697,11 @@ Now, we can append EDD information:
 ```{r}
 
 # Load detection distance modeling from above
+<<<<<<< HEAD
+load("G:/Shared drives/ABMI Camera Mammals/data/processed/detection-distance/predictions/Detection distances by site species and season.rData")
+=======
 load(paste0(root,"data/processed/detection-distance/predictions/Detection distances by site species and season_2020-05-27.rData"))
+>>>>>>> be4a0397e78396693d8e09844d2b5ee98b44aef5
 
 # Detection distance for each DeploymentYear, SpeciesGroup, and Season combination, tidied.
 df_detdist <- dd %>%

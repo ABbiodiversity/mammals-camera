@@ -268,9 +268,11 @@ d<-data.frame(Deployment=d2$deployment,Year=d2$Year,Lured=d2$Lure,DateTime=d2$Ti
 
 # Summarize time cameras operating. Used below to get rid of mammal series from times when the camera wasn't operating properly
 t<-read.csv("C:/Dave/ABMI/Cameras/2018 analysis/Start end times/Start end times Lure Feb 2019 ALL.csv")
+t <- read.csv(paste0(abmisc,"processed/dave-objects/Start end times Lure Feb 2019 ALL.csv"))
 t$DeploymentYear<-paste(t$Deployment,t$Year,sep="_")
 # Truncate to just cameras that have images
-dwti<-read.csv("C:/Dave/ABMI/Data/Mammals/2018/All deployments with images Feb 2019 ALL.csv")
+# dwti <- read.csv("C:/Dave/ABMI/Data/Mammals/2018/All deployments with images Feb 2019 ALL.csv")
+dwti<-read.csv(paste0(abmisc,"processed/dave-objects/All deployments with images July 2019 ALL.csv"))
 # Deployments with images, compiled from images database.
 # Needed, because there is metadata from many non-ABMI dpeloyments that have not been tagged
 dwti$DeploymentYear<-paste(dwti$Deployment,dwti$Year,sep="_")
@@ -279,7 +281,7 @@ site.list<-unique(as.character(t$DeploymentYear))
 
 t$StartTime1<-strptime(t$StartTime,format="%Y-%m-%d %H:%M:%S")  # Will read in as factor otherwise
 t$EndTime1<-strptime(t$EndTime,format="%Y-%m-%d %H:%M:%S")  # Will read in as factor otherwise
-t.extra<-read.csv("C:/Dave/ABMI/Cameras/2018 analysis/Start end times/Intermediate END START pairs Feb 2019 ALL.csv")
+t.extra<-read.csv(paste0(abmisc,"processed/dave-objects/Intermediate END START pairs Feb 2019 ALL.csv"))
 t.extra$DeploymentYear<-paste(t.extra$Deployment,t.extra$Year,sep="_")
 t.extra<-t.extra[!is.na(match(t.extra$DeploymentYear,dwti$DeploymentYear)),]
 # Get rid of any rows in t.extra that do not have tagged images
@@ -629,11 +631,11 @@ for (sp in 1:length(SpTable)) {
 
 # Lure effect
 # Do this using ABMI sites where lure and unlured are matched.  There are close to equal numbers of lured and unlured deployments
-d<-read.csv("C:/Dave/ABMI/Cameras/2018 analysis/Mammals by series Feb 2019 ALL.csv")
+d<-read.csv(paste0(abmisc,"processed/dave-objects/Mammals by series Feb 2019 ALL.csv"))
 d<-d[substr(d$Deployment,1,4)=="ABMI" & d$Year>=2015,]  # Don't use off-grids, or non-ABMI projects - unlured only mostly, or all lured for WHEC
 d<-d[substr(d$Deployment,1,6)!="ABMI-W",]  # And don't use wetlands for same reason
-d<-d[!is.na(d$Lured),]
-z<-by(d$Lured,paste(d$Deployment,d$Year,sep="_"),function(x) x[1])  # Check number of lured and unlured per year
+d<-d[!is.na(d$Lure),]
+z<-by(d$Lure,paste(d$Deployment,d$Year,sep="_"),function(x) x[1])  # Check number of lured and unlured per year
 Year<-substr(names(z),nchar(names(z))-3,nchar(names(z)))
 x<-table(Year,as.character(z))
 # Add deployments with no native mammals - t is metadata file processed above
@@ -646,48 +648,48 @@ x1<-table(t2$Year,t2$Lure)
 x<-x+x1  # Add to totals by year and lure status
 # Then summarize for each year
 d1<-d[d$Year==2015,]
-q.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],sum)/x[1,1]  # Mean duration per site
-q.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],sum)/x[1,2]
-n.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],length)/x[1,1]  # Mean records per site
-n.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],length)/x[1,2]
-q<-data.frame(Year=2015,Species=names(q.l),Duration.Unlured=as.numeric(q.u),Duration.Lured=as.numeric(q.l),n.Unlured=as.numeric(n.u),n.Lured=as.numeric(n.l),Mean.Duration.Unlured=as.numeric(q.u)/as.numeric(n.u),Mean.Duration.Lured=as.numeric(q.l)/as.numeric(n.l))
+q.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],sum)/x[1,1]  # Mean total_time_tbp per site
+q.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],sum)/x[1,2]
+n.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],length)/x[1,1]  # Mean records per site
+n.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],length)/x[1,2]
+q<-data.frame(Year=2015,common_name=names(q.l),total_time_tbp.UnLure=as.numeric(q.u),total_time_tbp.Lure=as.numeric(q.l),n.UnLure=as.numeric(n.u),n.Lure=as.numeric(n.l),Mean.total_time_tbp.UnLure=as.numeric(q.u)/as.numeric(n.u),Mean.total_time_tbp.Lure=as.numeric(q.l)/as.numeric(n.l))
 d1<-d[d$Year==2016,]
-q.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],sum)/x[2,1]  # Mean duration per site
-q.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],sum)/x[2,2]
-n.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],length)/x[2,1]  # Mean records per site
-n.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],length)/x[2,2]
-q<-rbind(q,data.frame(Year=2016,Species=names(q.l),Duration.Unlured=as.numeric(q.u),Duration.Lured=as.numeric(q.l),n.Unlured=as.numeric(n.u),n.Lured=as.numeric(n.l),Mean.Duration.Unlured=as.numeric(q.u)/as.numeric(n.u),Mean.Duration.Lured=as.numeric(q.l)/as.numeric(n.l)))
+q.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],sum)/x[2,1]  # Mean total_time_tbp per site
+q.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],sum)/x[2,2]
+n.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],length)/x[2,1]  # Mean records per site
+n.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],length)/x[2,2]
+q<-rbind(q,data.frame(Year=2016,common_name=names(q.l),total_time_tbp.UnLure=as.numeric(q.u),total_time_tbp.Lure=as.numeric(q.l),n.UnLure=as.numeric(n.u),n.Lure=as.numeric(n.l),Mean.total_time_tbp.UnLure=as.numeric(q.u)/as.numeric(n.u),Mean.total_time_tbp.Lure=as.numeric(q.l)/as.numeric(n.l)))
 d1<-d[d$Year==2017,]
-q.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],sum)/x[3,1]  # Mean duration per site
-q.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],sum)/x[3,2]
-n.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],length)/x[3,1]  # Mean records per site
-n.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],length)/x[3,2]
-q<-rbind(q,data.frame(Year=2017,Species=names(q.l),Duration.Unlured=as.numeric(q.u),Duration.Lured=as.numeric(q.l),n.Unlured=as.numeric(n.u),n.Lured=as.numeric(n.l),Mean.Duration.Unlured=as.numeric(q.u)/as.numeric(n.u),Mean.Duration.Lured=as.numeric(q.l)/as.numeric(n.l)))
+q.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],sum)/x[3,1]  # Mean total_time_tbp per site
+q.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],sum)/x[3,2]
+n.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],length)/x[3,1]  # Mean records per site
+n.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],length)/x[3,2]
+q<-rbind(q,data.frame(Year=2017,common_name=names(q.l),total_time_tbp.UnLure=as.numeric(q.u),total_time_tbp.Lure=as.numeric(q.l),n.UnLure=as.numeric(n.u),n.Lure=as.numeric(n.l),Mean.total_time_tbp.UnLure=as.numeric(q.u)/as.numeric(n.u),Mean.total_time_tbp.Lure=as.numeric(q.l)/as.numeric(n.l)))
 d1<-d[d$Year==2018,]
-q.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],sum)/x[4,1]  # Mean duration per site
-q.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],sum)/x[4,2]
-n.u<-by(d1$Duration[d1$Lured=="n"],d1$Species[d1$Lured=="n"],length)/x[4,1]  # Mean records per site
-n.l<-by(d1$Duration[d1$Lured=="y"],d1$Species[d1$Lured=="y"],length)/x[4,2]
-q<-rbind(q,data.frame(Year=2018,Species=names(q.l),Duration.Unlured=as.numeric(q.u),Duration.Lured=as.numeric(q.l),n.Unlured=as.numeric(n.u),n.Lured=as.numeric(n.l),Mean.Duration.Unlured=as.numeric(q.u)/as.numeric(n.u),Mean.Duration.Lured=as.numeric(q.l)/as.numeric(n.l)))
-write.table(q,file="C:/Dave/ABMI/Cameras/2018 analysis/Summaries/Series summary unlured versus lured Feb 2019 ALL.csv",sep=",",row.names=F)
+q.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],sum)/x[4,1]  # Mean total_time_tbp per site
+q.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],sum)/x[4,2]
+n.u<-by(d1$total_time_tbp[d1$Lure=="n"],d1$common_name[d1$Lure=="n"],length)/x[4,1]  # Mean records per site
+n.l<-by(d1$total_time_tbp[d1$Lure=="y"],d1$common_name[d1$Lure=="y"],length)/x[4,2]
+q<-rbind(q,data.frame(Year=2018,common_name=names(q.l),total_time_tbp.UnLure=as.numeric(q.u),total_time_tbp.Lure=as.numeric(q.l),n.UnLure=as.numeric(n.u),n.Lure=as.numeric(n.l),Mean.total_time_tbp.UnLure=as.numeric(q.u)/as.numeric(n.u),Mean.total_time_tbp.Lure=as.numeric(q.l)/as.numeric(n.l)))
+write.table(q, file=paste0(abmisc,"processed/dave-objects/Series summary unlured versus lured Feb 2019 ALL.csv"), sep = ",", row.names = FALSE)
 
 # And bootstrapped version to check for changes in lure effect in different years
-q<-by(d$Photos,d$Species,sum)  # Figure out top species
+q<-by(d$n_photos,d$common_name,sum)  # Figure out top species
 sp.top<-names(sort(-q))[1:23]
 sp.top<-sp.top[-which(sp.top=="Bighorn sheep")]  # Only one year
 sp.top<-sp.top[-which(sp.top=="Richardson's Ground Squirrel")]
 sp.top<-sp.top[-which(sp.top=="Bison")]  # Only one year
-d2<-d[d$Species%in% sp.top,]  # Limit to top species only
+d2<-d[d$common_name%in% sp.top,]  # Limit to top species only
 d2$Deployment<-as.character(d2$Deployment)
-d2$Species<-as.factor(as.character(d2$Species))  # And make sure that excluded species are excluded
+d2$common_name<-as.factor(as.character(d2$common_name))  # And make sure that excluded species are excluded
 d2<-d2[substr(d2$Deployment,1,4)=="ABMI" & d2$Year>=2015,]  # Only use ABMI on-grids with paired design
 d2<-d2[substr(d2$Deployment,1,6)!="ABMI-W",]  # And don't use wetlands for same reason
-d2<-d2[!is.na(d2$Lured),]
+d2<-d2[!is.na(d2$Lure),]
 d2$Deployment<-as.character(d2$Deployment)  # This ensures that excluded deployments are not included
 d2$Site<-substr(d2$Deployment,6,nchar(d2$Deployment)-3)  # This assumes all sites are ABMI-[Site]-{NW,NE,SW,SE}
 # Add qualifying deployments with no native mammals (in sp.top)
 t2<-t1[is.na(match(t1$DeploymentYear,d2$DeploymentYear)),]   # t1 prepared above
-t3<-data.frame(Deployment=t2$Deployment,Year=t2$Year,Lured=t2$Lure,DateTime=t2$StartTime,Series=0,Photos=0,Species=NA,Sex=NA,Age=NA,Multiple=NA,Individuals=0,Duration=0,DeploymentYear=t2$DeploymentYear,Site=NA)
+t3<-data.frame(Deployment=t2$Deployment,Year=t2$Year,Lure=t2$Lure,Time1=t2$StartTime,SeriesNum=0,n_photos=0,common_name=NA,sex=NA,age_class=NA,multiple_animals=NA,mean_animals=0,total_time_tbp=0,DeploymentYear=t2$DeploymentYear,Site=NA)
 d2<-rbind(d2,t3)
 niter<-1000
 lure.bs<-array(NA,c(length(sp.top),4,2,niter))  # For each species, year, percent of duration or nPhotos in lured sites, for each iteration
@@ -699,10 +701,10 @@ for (yr in 1:4) {
     s<-sample(1:length(site.list),length(site.list),replace=TRUE)
     i<-unlist(lapply(site.list[s],function(a) which(d1$Site %in% a)))
     d1.bs<-d1[i,]
-    q.u<-by(d1.bs$Duration[d1.bs$Lured=="n"],d1.bs$Species[d1.bs$Lured=="n"],sum)/length(unique(d1.bs$Deployment[d1.bs$Lured=="n"]))  # Average duration per site
-    q.l<-by(d1.bs$Duration[d1.bs$Lured=="y"],d1.bs$Species[d1.bs$Lured=="y"],sum)/length(unique(d1.bs$Deployment[d1.bs$Lured=="y"]))
-    n.u<-by(d1.bs$Duration[d1.bs$Lured=="n"],d1.bs$Species[d1.bs$Lured=="n"],length)/length(unique(d1.bs$Deployment[d1.bs$Lured=="n"]))  # Average records per site
-    n.l<-by(d1.bs$Duration[d1.bs$Lured=="y"],d1.bs$Species[d1.bs$Lured=="y"],length)/length(unique(d1.bs$Deployment[d1.bs$Lured=="y"]))
+    q.u<-by(d1.bs$total_time_tbp[d1.bs$Lure=="n"],d1.bs$common_name[d1.bs$Lure=="n"],sum)/length(unique(d1.bs$Deployment[d1.bs$Lure=="n"]))  # Average total_time_tbp per site
+    q.l<-by(d1.bs$total_time_tbp[d1.bs$Lure=="y"],d1.bs$common_name[d1.bs$Lure=="y"],sum)/length(unique(d1.bs$Deployment[d1.bs$Lure=="y"]))
+    n.u<-by(d1.bs$total_time_tbp[d1.bs$Lure=="n"],d1.bs$common_name[d1.bs$Lure=="n"],length)/length(unique(d1.bs$Deployment[d1.bs$Lure=="n"]))  # Average records per site
+    n.l<-by(d1.bs$total_time_tbp[d1.bs$Lure=="y"],d1.bs$common_name[d1.bs$Lure=="y"],length)/length(unique(d1.bs$Deployment[d1.bs$Lure=="y"]))
     lure.bs[,yr,1,iter]<-q.l/(q.u+q.l)*100
     lure.bs[,yr,2,iter]<-n.l/(n.u+n.l)*100
   }
@@ -722,9 +724,9 @@ dimnames(lure.bs)[[3]]<-dimnames(lure.bs.sum)[[3]]<-c("duration","photos")
 sp.order<-c(1,8,7,3,14,19,6,9,2,10,5,11,17,20,13,16,18,12,15)  # Bears, dogs, cats+weasels, ungulates, others
 x<-c(1,2,3.5,4.5,5.5,7,8,9,10.5,12,13,14,15,16,17,18.5,19.5,20.5)
 col1<-rep(rainbow(10,v=0.8),2)
-png(file="C:/Dave/ABMI/Cameras/2018 analysis/Summaries/Lure effect over years.png",height=600,width=900)
+png(file="S:/github-repos-data/SC-Camera-Mammals/results/figures/Lure effect over years.png",height=600,width=900)
 par(mai=c(3,0.9,0.3,0.3))
-dplot(0,0,xlim=range(x),ylim=log(c(0.2,21)),xlab="",ylab="Lured:Unlured",xaxt="n",yaxt="n",typ="n")
+plot(0,0,xlim=range(x),ylim=log(c(0.2,21)),xlab="",ylab="Lured:Unlured",xaxt="n",yaxt="n",typ="n")
 axis(side=2,at=log(c(0.1,0.2,0.25,1/3,1/2,1,2,3,4,5,7,10,20)),lab=rep("",13),tck=1,col="grey80")
 axis(side=2,at=log(c(0.1,0.2,0.25,1/3,1/2,1,2,3,4,5,7,10,20)),lab=c(0.1,0.2,0.25,0.33,0.5,1,2,3,4,5,7,10,20),tck=0.015,cex.lab=1.3)
 for (i in 1:length(x)) {

@@ -1,6 +1,6 @@
 #-----------------------------------------------------------------------------------------------------------------------
 
-# Title: Calculate camera deployment operating times by day
+# Title: Calculate camera deployment operating time ranges by day
 # Authors: Dave Huggard, Marcus Becker
 
 # Previous scripts: 01_clean-raw-data
@@ -19,7 +19,7 @@ root <- "G:/Shared drives/ABMI Camera Mammals/"
 #-----------------------------------------------------------------------------------------------------------------------
 
 # Load tag data
-df_all <- read_csv(paste0(root, "data/base/clean/abmi-all-years_all-data_clean_2020-06-02.csv"))
+df_all <- read_csv(paste0(root, "data/base/clean/abmi-all-years_all-data_clean_2020-06-08.csv"))
 
 # Camera start and end times
 df_cam_range <- read_csv(paste0(root, "data/lookup/start-end/all-cam_startend_2020-06-01.csv"))
@@ -37,7 +37,7 @@ write_csv(df_all, paste0(root, "data/base/clean/abmi-all-years_all-data_clean_",
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-# Truncate time ranges if there is a field of view issues (i.e. END without a subsequent START):
+# Truncate time ranges if there is a field of view issue (i.e. END without a subsequent START):
 df_cam_range_trunc <- df_all %>%
   select(name, year, date_detected, common_name, field_of_view) %>%
   filter(field_of_view == "END - Last Good Image in FOV" | field_of_view == "START - First Good Image in FOV") %>%
@@ -47,14 +47,17 @@ df_cam_range_trunc <- df_all %>%
   filter(field_of_view == "END - Last Good Image in FOV", is.na(starts_again)) %>%
   select(name, year, updated_latest = date_detected)
 
-# Update deployment operating time ranges with new end_date_time if applicable:
+# Update deployment operating time ranges with new end_date_time, if applicable:
 df_cam_range_upd <- df_cam_range %>%
   left_join(df_cam_range_trunc, by = c("name", "year")) %>%
   mutate(end_date_time = if_else(is.na(updated_latest), end_date_time, updated_latest),
          name_year = paste0(name, "_", year)) %>%
   select(name_year, start_date_time, end_date_time)
 
-# Create intermediate End-Start pairs dataframe, formated as END / START in subsequent rows:
+#-----------------------------------------------------------------------------------------------------------------------
+
+# Create intermediate End-Start pairs dataframe, formatted as END / START in subsequent rows:
+
 inter <- df_all %>%
   filter(field_of_view == "START - First Good Image in FOV" | field_of_view == "END - Last Good Image in FOV") %>%
   mutate(name_year = paste0(name, "_", year)) %>%
@@ -71,7 +74,7 @@ df_inter_pairs <- df_all %>%
   arrange(name_year, date_detected) %>%
   select(name_year, date_detected, field_of_view) %>%
   group_by(name_year) %>%
-  # This code is gross.
+  # This code is gross. Issue is that cameras <2019 are formatted slightly differently wrt START / END tagging
   mutate(starts_again = ifelse(lead(field_of_view) == "START - First Good Image in FOV" & field_of_view == "END - Last Good Image in FOV", 1, NA),
          restart = ifelse(lag(starts_again) == "1" & lag(field_of_view) == "END - Last Good Image in FOV", 1, NA)) %>%
   filter(starts_again == "1" | restart == "1") %>%
@@ -86,12 +89,15 @@ df_inter_pairs <- df_all %>%
 ends <- df_inter_pairs %>%
   select(name_year, date_detected, field_of_view)
 
+# Final intermediate pairs dataframe
 df_inter_pairs <- df_inter_pairs %>%
   select(name_year, date_detected = date_detected1, field_of_view = field_of_view1) %>%
   bind_rows(ends) %>%
   arrange(name_year, date_detected)
 
 #-----------------------------------------------------------------------------------------------------------------------
+
+# Summarise time-by-day for each camera deployment
 
 start <- as.Date("2009-01-01")
 end <- df_cam_range_upd %>% filter(!is.na(end_date_time)) %>% pull(end_date_time) %>% max()
@@ -131,11 +137,13 @@ for (i in 1:length(dep)) {
   }
 }
 
+# Add to each year (note whether it was a leap year)
 days.per.year <- c(365,365,365,366,365,365,365,366,365,365,365,366)
 Jan1 <- cumsum(c(1, days.per.year))
 
 yrnum <- julday <- NULL
 
+# Row sums
 for (i in 1:ncol(time.since.2009)) {
   yrnum[i] <- sum(i >= Jan1)
   julday[i] <- i - Jan1[yrnum[i]] + 1
@@ -155,8 +163,12 @@ df_abmi_tbd_summary <- time.by.day %>%
          total_winter_days = rowSums(select(., -c(name_year, 107:288)))) %>%
   select(name_year, total_days, total_summer_days, total_winter_days)
 
+#-----------------------------------------------------------------------------------------------------------------------
+
 # Write results
 write_csv(df_abmi_tbd_summary, paste0(root, "data/processed/time-by-day/abmi-all-years_tbd-summary_", Sys.Date(), ".csv"))
+
+#-----------------------------------------------------------------------------------------------------------------------
 
 
 

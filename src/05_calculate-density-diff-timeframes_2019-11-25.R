@@ -34,7 +34,8 @@ time.by.day <- read_csv(paste0(public_tomel, "camera-operating-days-all.csv"))
 df_series_all <- read_csv(paste0(public_tomel, "series-data-all.csv"))
 
 # Detection distance modeling
-load(paste0(public_tomel,"Detection distances by site species and season.rData"))
+# load(paste0(public_tomel,"Detection distances by site species and season.rData"))
+load("G:/Shared drives/ABMI Camera Mammals/data/processed/detection-distance/predictions/Detection distances by site species and season_2020-05-27.rData")
 
 #-------------------------------------------------------------------------------
 
@@ -46,7 +47,7 @@ cam_fov_ang <- 42
 
 # Generate time-by-day summaries for each requested time period.
 df_tbd_summary <- time.by.day %>%
-  as_tibble() %>%
+  as_tibble(rownames = "DeploymentYear") %>%
   # Numbers of columns correspond to Julian day
   mutate(total = rowSums(select(., -DeploymentYear)),
          # Spring is April 1 to June 17
@@ -59,16 +60,21 @@ df_tbd_summary <- time.by.day %>%
          total.mar = rowSums(select(., V60:V90)))%>%
   select(DeploymentYear, total:total.mar) %>%
   # Filter only for ABMI and CMU deployments from 2018
-  filter(str_detect(DeploymentYear, "2018|2017|2016")) %>%
-  filter(str_detect(DeploymentYear, "^ABMI") | str_detect(DeploymentYear, paste(cmu_abb, collapse = "|")))
+  filter(str_detect(DeploymentYear, "2018|2017|2016|2015|2019")) %>%
+  filter(str_detect(DeploymentYear, "^ABMI"),
+         !str_detect(DeploymentYear, "OG"))
 
 # Calculate total duration spent on camera by deployment, year, and species:
-df_series_summary <- df_series_all %>%
+df_series_summary <- df_tt %>%
+  rename(DeploymentYear = name_year) %>%
+  # Correct number of individuals issue
+  # mutate(series_total_time = mean_animals * series_total_time) %>%
   # Filter only for ABMI and CMU deployments from 2018
-  filter(str_detect(DeploymentYear, "2018|2017|2016")) %>%
-  filter(str_detect(DeploymentYear, "^ABMI") | str_detect(DeploymentYear, paste(cmu_abb, collapse = "|"))) %>%
+  filter(str_detect(DeploymentYear, "2018|2017|2016|2015|2019")) %>%
+  filter(str_detect(DeploymentYear, "^ABMI"),
+         !str_detect(DeploymentYear, "OG")) %>%
   # Calculate Julian day and time period of each series
-  mutate(julian = as.numeric(format(date_time_taken, "%j")),
+  mutate(julian = as.numeric(format(date_detected, "%j")),
          season = case_when(
            julian >= 1 & julian <= 31 ~ "January",
            julian >= 32 & julian <= 59 ~ "February",
@@ -105,7 +111,7 @@ df_series_nonative <- df_tbd_summary %>%
   # Total_Duration is 0 because these species weren't seen.
   mutate(total_duration = 0)
 
-# Bind togther the two df's of series (w/ and w/o native mammals)
+# Bind together the two df's of series (w/ and w/o native mammals)
 df_series_full <- df_series_summary %>%
   bind_rows(df_series_nonative) %>%
   arrange(DeploymentYear, common_name, season) %>%
@@ -130,8 +136,9 @@ df_detdist <- dd %>%
   separate(SpGroupSeason, into = c("detdistgroup", "season")) %>%
   mutate(detdistgroup = str_replace(detdistgroup, "wapiti", "")) %>%
   # Select only 2018 ABMI & CMU deployments
-  filter(str_detect(DeploymentYear, "2018|2017|2016")) %>%
-  filter(str_detect(DeploymentYear, "^ABMI") | str_detect(DeploymentYear, paste(cmu_abb, collapse = "|"))) %>%
+  filter(str_detect(DeploymentYear, "2018|2017|2016|2015|2019")) %>%
+  filter(str_detect(DeploymentYear, "^ABMI"),
+         !str_detect(DeploymentYear, "OG")) %>%
   # Create new time periods - kind of a hacky way to do this.
   crossing(new.season = c("Spring", "January", "February",  "March", "November", "December")) %>%
   # Set criteria. Note that I'm using the Winter models for Jan,Feb,Mar,Nov,Dec, Summer for Spring.
@@ -141,10 +148,12 @@ df_detdist <- dd %>%
          (season == "Winter" & new.season == "November") |
          (season == "Winter" & new.season == "December") |
          (season == "Summer" & new.season == "Spring")) %>%
-  select(DeploymentYear, detdistgroup, season = new.season, detdist)
+  select(DeploymentYear, detdistgroup, season = new.season, detdist) %>%
+  mutate(DeploymentYear = toupper(DeploymentYear))
 
 # Combine, and then we'll have all the ingredients we need for density calc.
 df_dens_ing <- df_series_full %>%
+  mutate(DeploymentYear = toupper(DeploymentYear)) %>%
   left_join(df_dist_groups, by = "common_name") %>%
   rename(detdistgroup = dist_group) %>%
   mutate(detdistgroup = ifelse(detdistgroup == "Bighorn sheep", "Bighornsheep", detdistgroup),
@@ -167,15 +176,67 @@ df_density_wtd <- df_density %>%
   mutate(season = factor(season,
                          levels = c("November", "December", "January",
                                     "February", "March", "Spring"))) %>%
-  select(DeploymentYear, common_name, season, density = cpue_km2) %>%
+  select(DeploymentYear, common_name, season, days, density_km2 = cpue_km2) %>%
   arrange(DeploymentYear, season) %>%
-  na_if("NaN")
+  na_if("NaN") %>%
+  na_if("Inf")
+
+# Lure adjustment
+df_lure <- read_csv("G:/Shared drives/ABMI Camera Mammals/data/lookup/lure/all-cam-lure_2020-06-01.csv") %>%
+  mutate(DeploymentYear = paste0(name, "_", year)) %>%
+  select(DeploymentYear, lure) %>%
+  distinct()
+
+all <- read_csv("G:/Shared drives/ABMI Camera Mammals/results/density/Marcus/abmi-all-years_density_2020-06-09.csv") %>%
+  filter(str_detect(name_year, "ABMI")) %>%
+  filter(common_name == "White-tailed Deer") %>%
+  group_by(name_year) %>%
+  summarise(density = mean(density_km2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  left_join(df_lure, by = "name_year") %>%
+  na_if("Inf") %>%
+  na_if("NaN") %>%
+  group_by(lure) %>%
+  summarise(density = mean(density, na.rm = TRUE)) %>%
+  ungroup() %>%
+  filter(!is.na(lure))
+
+lure.effect <- 0.96
+
+df_density_wtd_lure <- df_density_wtd %>%
+  left_join(df_lure, by = "DeploymentYear") %>%
+  mutate(density_km2_adj = ifelse(lure == "Yes",
+         density_km2 / lure.effect, density_km2)) %>%
+  select(DeploymentYear, common_name, season, days, lure, density_km2, density_km2_adj)
 
 # Write csv file
-write_csv(df_density_wtd, paste0(public_tomel, "density_wtd_abmicmu_2016-18.csv"))
+write_csv(df_density_wtd, paste0(public_tomel, "density-wtd-abmicmu-2015-18_2020-06-15.csv"))
 
+#-----------------------------------------------------------------------------------------------------------------------
 
+# Further exploration
 
+df_density_wtd <- read_csv(paste0(public_tomel, "density-wtd-abmi-2015-19_2020-06-17.csv"))
+
+tbd <- read_csv("G:/Shared drives/ABMI Camera Mammals/data/processed/time-by-day/abmi-all-years_tbd-summary_2020-06-08.csv")
+
+deployments <- df_density_wtd %>%
+  select(name_year = DeploymentYear) %>%
+  distinct() %>%
+  pull()
+
+check1 <- df_abmi_native %>%
+  filter(name_year %in% deployments,
+         common_name == "White-tailed Deer")
+
+check2 <- tbd %>%
+  filter(name_year %in% deployments)
+
+mean(check2$total_days, na.rm = TRUE)
+
+check3 <- check1 %>%
+  mutate(julian = as.numeric(format(date_detected, "%j"))) %>%
+  filter(julian > 305 | julian < 168)
 
 
 

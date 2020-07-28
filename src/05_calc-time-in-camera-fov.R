@@ -20,9 +20,9 @@ root <- "G:/Shared drives/ABMI Camera Mammals/"
 # Previously processed data:
 
 # 1. Probabilistic gaps
-df_gap_pred <- read_csv(paste0(root, "data/processed/probabilistic-gaps/gap-mod-group.csv"))
-# 2. Time between images
-df_tbi <- read_csv(paste0(root, "data/processed/time-btwn-images/Table of time between photos within series by species incl 2019 May 2020.csv")) %>%
+df_leave_prob_pred <- read_csv(paste0(root, "data/processed/probabilistic-gaps/gap-leave-prob_predictions_2020-06-25.csv"))
+# 2. Time between photos
+df_tbp <- read_csv(paste0(root, "data/processed/time-btwn-images/Table of time between photos within series by species incl 2019 May 2020.csv")) %>%
   rename(common_name = Species)
 # 3. Time by day summary
 df_tbd <- read_csv(paste0(root, "data/processed/time-by-day/abmi-all-years_tbd-summary_2020-06-08.csv"))
@@ -54,6 +54,9 @@ df_abmi_native <- df_abmi_all %>%
   filter(common_name %in% native_sp,
          field_of_view == "WITHIN") %>%
   unite(col = "name_year", name, year, sep = "_", remove = FALSE)
+
+# Save native only data
+write_csv(df_abmi_native, paste0(root, "data/base/clean/abmi-all-years_native-sp_clean_", Sys.Date(), ".csv"))
 
 df_series <- df_abmi_native %>%
   # Join gap class
@@ -87,14 +90,30 @@ df_series <- df_abmi_native %>%
   # Join gap group lookup table
   left_join(df_gap_groups, by = "common_name") %>%
   # Join gap leaving predictions
-  left_join(df_gap_pred, by = c("gap_group", "diff_time")) %>%
+  left_join(df_leave_prob_pred, by = c("gap_group", "diff_time")) %>%
   # Adjust time difference between ordered images that require probabilistic time assignment
   mutate(pred = replace_na(pred, 1),
          diff_time_adj = round(ifelse(gap_prob == 1, diff_time * (1 - pred), diff_time), digits = 2))
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-# Step 2. Calculate total time in front of the camera, by series (tts = Total Time by Series)
+# Step 2. Calculate time between photos (tbp), by species. This is ABMI-only, but we use a greater pool of data below.
+
+df_tbp_abmi <- df_series %>%
+  mutate(series_num_previous = lag(series_num)) %>%
+  # Remove first image from each series
+  filter(series_num == series_num_previous) %>%
+  group_by(common_name) %>%
+  # Calculate average tbp and number of images from each species
+  summarise(tbp = mean(diff_time),
+            sample_size = n())
+
+# Write results
+write_csv(df_tbp_abmi, paste0(root, "data/processed/time-btwn-images/abmi-all-years_tbp_", Sys.Date(), ".csv"))
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+# Step 3. Calculate total time in front of the camera, by series (tts = Total Time by Series)
 
 # Start with series that have >1 image
 df_tts_multiple <- df_series %>%
@@ -118,11 +137,13 @@ df_tts_all <- df_tts_multiple %>%
   bind_rows(df_tts_single) %>%
   arrange(series_num)
 
-# Add time between images, acccounting for the average number of animals in each photo of a series
+# Add time between photos, accounting for the average number of animals in each photo of a series
 df_tts_final <- df_series %>%
-  left_join(df_tbi, by = "common_name") %>%
+  # Join in average tbp, by species; note that this is slightly different from results calculated above (incl. non-ABMI)
+  left_join(df_tbp, by = "common_name") %>%
   select(series_num, common_name, number_individuals, time_btwn_images = TBP) %>%
   group_by(series_num) %>%
+  # Number of individuals in a series
   mutate(avg_individuals = mean(number_individuals)) %>%
   ungroup() %>%
   select(-number_individuals) %>%
@@ -133,7 +154,7 @@ df_tts_final <- df_series %>%
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-# Step 3. Calculate total time in front of camera, by deployment, year, and species (tt = total time)
+# Step 4. Calculate total time in front of camera, by deployment, year, and species (tt = total time)
 
 df_tt <- df_series %>%
   group_by(series_num) %>%

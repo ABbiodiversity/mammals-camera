@@ -20,7 +20,7 @@ root <- "G:/Shared drives/ABMI Camera Mammals/"
 #-----------------------------------------------------------------------------------------------------------------------
 
 # Load time in front of camera data:
-df_tt_full <- read_csv(paste0(root, "data/processed/time-in-cam-fov/abmi-all-years_cam-time_2020-06-08.csv"))
+df_tt_full <- read_csv(paste0(root, "data/processed/time-in-cam-fov/abmi-all-years_cam-time_2020-06-25.csv"))
 
 # Load effective detection distance (EDD) modeling:
 load(paste0(root,"data/processed/detection-distance/predictions/Detection distances by site species and season_2020-05-27.rData"))
@@ -32,7 +32,7 @@ df_dist_groups <- read_csv(paste0(root, "data/lookup/species-distance-groups.csv
 # Set parameters:
 
 # Camera field of view angle
-cam_fov_angle <- 45
+cam_fov_angle <- 42
 
 #-----------------------------------------------------------------------------------------------------------------------
 

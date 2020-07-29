@@ -44,7 +44,7 @@ library(mgcv)
 library(grid)
 
 # Path to data folder on ABMI Science Centre S: drive
-root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
+# root <- "S:/github-repos-data/SC-Camera-Mammals/data/"
 
 # Path to Google Drive folder: 
 root <- "G:/Shared drives/ABMI Camera Mammals/"
@@ -59,7 +59,7 @@ opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE)
 # Raw data
 
 # Raw native mammal data (2013-2018):
-df_native_all <- read_csv(paste0(root,"base/ALL_native-mammals_09-01-2019.csv"),
+df_native_all <- read_csv(paste0(root,"data/base/raw/previous/ALL_native-mammals_2019-09-01.csv"),
                           col_types = cols(distance = col_character(),
                                            number_during_gap = col_number(),
                                            number_individuals = col_character()),
@@ -450,9 +450,10 @@ We can visualize this data in Figure \@ref(fig:gap-raw), which displays the same
 ```{r gap-raw, fig.cap="Plots of image gap length (s) and whether the animal stayed in the camera field of view or left.", out.width="100%", fig.align="center"}
 
 # Create dataframe of each obs we previously flagged to check gap
-df_gapcheck <- df_series %>%
+df_gapcheck <- df_series_orig %>%
   filter(!is.na(gap_class_lag) & gap_check == "1") %>%
-  select(common_name, gap_class_lag, diff_time) %>%
+  mutate(name_year = paste0(deployment, "_", Year)) %>%
+  select(name_year, common_name, gap_class, gap_class_lag, diff_time) %>%
   # Create new left variable - did the animal leave the field of view?
   mutate(left = ifelse(gap_class_lag == "P", 0, 1)) %>%
   select(-gap_class_lag)

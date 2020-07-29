@@ -1,7 +1,7 @@
 #-----------------------------------------------------------------------------------------------------------------------
 
 # Title: Retrieve gap class designations from old ABMI camera tagging system, add N gap classes following NONE images
-# Authors: Marcus Becker, Dave Huggard
+# Authors: Dave Huggard, Marcus Becker
 
 # Previous scripts: 01_clean-raw-data
 
@@ -21,6 +21,8 @@ root <- "G:/Shared drives/ABMI Camera Mammals/"
 #-----------------------------------------------------------------------------------------------------------------------
 
 # Retrieve gap class designations from previous data (years 2013 through 2018)
+
+# Note: These tags were added with previous ABMI tagging system.
 
 df_gap <-
   # Read in previous data (years 2013 through 2018)

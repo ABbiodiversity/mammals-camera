@@ -3,7 +3,7 @@
 # Title: Process GIS point summaries for each camera deployment
 # Author: Marcus Becker
 
-# Previous scripts:
+# Previous scripts: None.
 
 #-----------------------------------------------------------------------------------------------------------------------
 

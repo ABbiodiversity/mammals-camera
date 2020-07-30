@@ -105,6 +105,7 @@ for (sp in (length(SpTable)-1):length(SpTable)) {
     dd.uci[,sp,j]<-rep(5/sqrt(1-plogis(p1$fit[1]+2*p1$se.fit[1])),length(site.list))  # Only null model
   }  # Next time period j
 }  # Next of these two species
+
 dimnames(dd)[[1]]<-dimnames(dd.lci)[[1]]<-dimnames(dd.uci)[[1]]<-site.list
 dimnames(dd)[[2]]<-dimnames(dd.lci)[[2]]<-dimnames(dd.uci)[[2]]<-SpTable
 dimnames(dd)[[3]]<-dimnames(dd.lci)[[3]]<-dimnames(dd.uci)[[3]]<-pred.season

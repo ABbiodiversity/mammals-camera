@@ -138,7 +138,7 @@ for (i in 1:length(dep)) {
 }
 
 # Add to each year (note whether it was a leap year)
-days.per.year <- c(365,365,365,366,365,365,365,366,365,365,365,366)
+days.per.year <- c(365, 365, 365, 366, 365, 365, 365, 366, 365, 365, 365, 366)
 Jan1 <- cumsum(c(1, days.per.year))
 
 yrnum <- julday <- NULL

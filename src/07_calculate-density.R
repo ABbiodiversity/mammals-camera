@@ -23,7 +23,7 @@ root <- "G:/Shared drives/ABMI Camera Mammals/"
 df_tt_full <- read_csv(paste0(root, "data/processed/time-in-cam-fov/abmi-all-years_cam-time_2020-06-25.csv"))
 
 # Load effective detection distance (EDD) modeling:
-load(paste0(root,"data/processed/detection-distance/predictions/Detection distances by site species and season_2020-05-27.rData"))
+load(paste0(root,"data/processed/detection-distance/predictions/Detection distances by site species and season.rdata"))
 
 # Lookup:
 
@@ -70,6 +70,4 @@ df_density <- df_dens_ing %>%
 
 write_csv(df_density, paste0(root, "results/density/Marcus/abmi-all-years_density_", Sys.Date(), ".csv"))
 
-
-
-
+#-----------------------------------------------------------------------------------------------------------------------

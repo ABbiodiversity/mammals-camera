@@ -11,6 +11,7 @@
 library(readr)
 library(dplyr)
 library(tidyr)
+library(stringr)
 library(lubridate)
 library(mgcv)
 
@@ -29,9 +30,13 @@ df_edd_groups <- read_csv(paste0(root, "data/lookup/species-distance-groups.csv"
 # Veg/HF groupings to try in modeling
 df_veghf_groups <- read_csv(paste0(root,"data/lookup/veg-pole-distance.csv"))
 
+# Season date cutoffs (julian)
+summer.start.j <- 106
+summer.end.j <- 288
+
 #-----------------------------------------------------------------------------------------------------------------------
 
-# Retrieve pole position information from previous data (years 2013 through 2018)
+# Step 1: Retrieve pole position information from previous data (years 2013 through 2018)
 
 # Note: these tags were added with the previous ABMI tagging system
 
@@ -90,7 +95,7 @@ df_pole_veghf <- df_veghf %>%
 
 # Step 2. EDD modeling.
 
-# Detach a couple packages - they wreak some havoc by using tibbles.
+# Detach a couple packages - they wreak some havoc by using tibbles. What jerks.
 unloadNamespace(c("tidyr", "dplyr"))
 
 # Species groups
@@ -197,3 +202,97 @@ for (sp in 1:length(SpTable)) {
 
 }  # Next SpGroup
 
+#-----------------------------------------------------------------------------------------------------------------------
+
+# Step 3: Make predictions for each deployment, season, and species combination
+
+df_veghf_detdist <- df_veghf %>%
+  select(name_year = DeploymentYear, VegHF = VegForDetectionDistance) %>%
+  mutate(VegHF = ifelse(VegHF == "WetShrub", "Shrub", VegHF)) %>%
+  left_join(df_veghf_groups, by = "VegHF")
+
+pred.season <- c("summer", "winter")
+
+site.list <- unique(df_veghf_detdist$name_year)
+
+fname.models <- paste0(root, "data/processed/detection-distance/group-models/Detection distance models ")
+
+dd <- dd.lci <- dd.uci <- array(NA, c(length(site.list), length(SpTable), length(pred.season)))
+
+for (sp in c(1:(length(SpTable) - 2))) {  # Bighorn sheep and Pronghorn treated separately.
+
+  fname<-paste(fname.models, SpTable[sp], ".rdata", sep="")
+  load(fname)
+
+  # Model m, bic.wt
+  hab.list<-as.character(m[[2]]$xlevels[[1]])  # The shared subset of habitat types in both VegHF models
+  s1 <- df_veghf_detdist
+  # Missing data for some veg types for some species, so need to collapse vegHF types in s
+  if (("Water" %in% hab.list) == FALSE) s1$VegHF <- ifelse(s1$VegHF == "Water", "WetGrass", s1$VegHF)
+  if (("WetTreed" %in% hab.list) == FALSE) s1$VegHF <- ifelse(s1$VegHF == "WetTreed", "WetGrass", s1$VegHF)
+  if (("WetGrass" %in% hab.list) == FALSE) s1$VegHF <- ifelse(s1$VegHF == "WetGrass", "Grass", s1$VegHF)
+  if (("Grass" %in% hab.list) == FALSE) s1$VegHF <- ifelse(s1$VegHF == "Grass", "WetGrass", s1$VegHF)
+  if (("Shrub" %in% hab.list)==FALSE) {
+    s1$VegHF <- ifelse(s1$VegHF == "Shrub", "Grass", s1$VegHF)
+    s1$VegHF2 <- ifelse(s1$VegHF2 == "Shrub", "GrassWater", s1$VegHF2)
+    s1$VegHF4 <- ifelse(s1$VegHF4 == "Shrub", "GrassWaterHF", s1$VegHF4)
+  }
+  if ("wet" %in% m[[10]]$xlevels == FALSE) {
+    s1$VegHF1 <- ifelse(s1$VegHF1 == "Wet", "GrassShrub", s1$VegHF1)
+    s1$VegHF3 <- ifelse(s1$VegHF3 == "Wet", "GrassShrubHF", s1$VegHF3)
+  }
+  for (j in 1:2) {  # Predictions for the two seasons
+    p <- p.se<-array(0,c(length(m), length(site.list)))
+    p1 <- predict(m[[1]], se.fit=TRUE)
+    p[1, ] <- rep(p1$fit[1], length(site.list))
+    p.se[1, ] <- rep(p1$se.fit[1], length(site.list))
+    for (k in 2:length(m)) {
+
+      p1<-predict(m[[k]], newdata = data.frame(
+        s1[,c("VegHF","VegHF1","VegHF2","VegHF3","VegHF4","VegHF5")],
+        season=pred.season[j]),
+        se.fit=TRUE)
+
+      # The SE produces CI's on the detection distance, but not currently used (would be used if we did full CI's on estimates)
+      p[k, ] <- p[k, ] + p1$fit
+      p.se[k, ] <- p.se[k, ] + p1$se.fit
+    }
+
+    p.all <- colSums(p * bic.wt)  # BIC weighted average
+    p.se.all <- colSums(bic.wt * sqrt(p.se ^ 2 + (p - rep(p.all, each = length(m))) ^ 2))
+    # Convert probability of being behind 5m pole into effective detection distance
+    dd[, sp, j] <- 5 / sqrt(1 - plogis(p.all))
+    dd.lci[, sp, j] <- 5 / sqrt(1 - plogis(p.all - 2 * p.se.all))
+    dd.uci[, sp, j] <- 5 / sqrt(1 - plogis(p.all + 2 * p.se.all))
+  }  # Next time period j
+}
+
+# Separate predictions for pronghorn and bighorn, because only have null model
+for (sp in (length(SpTable) - 1):length(SpTable)) {
+
+  fname <- paste(fname.models, SpTable[sp], ".rdata", sep = "")
+  load(fname)  # Model m, bic.wt, hab.list
+  s1 <- df_veghf_detdist
+  for (j in 1:2) {
+    p1 <- predict(m[[1]], se.fit=TRUE)  # Only null model
+    dd[, sp, j] <- rep(5 / sqrt(1 - plogis(p1$fit[1])), length(site.list))  # Only null model
+    dd.lci[, sp, j] < -rep(5 / sqrt(1 - plogis(p1$fit[1] - 2 * p1$se.fit[1])), length(site.list))  # Only null model
+    dd.uci[, sp, j] <- rep(5 / sqrt(1 - plogis(p1$fit[1] + 2 * p1$se.fit[1])), length(site.list))  # Only null model
+  }  # Next time period j
+}  # Next of these two species
+
+dimnames(dd)[[1]]<-dimnames(dd.lci)[[1]]<-dimnames(dd.uci)[[1]]<-site.list
+dimnames(dd)[[2]]<-dimnames(dd.lci)[[2]]<-dimnames(dd.uci)[[2]]<-SpTable
+dimnames(dd)[[3]]<-dimnames(dd.lci)[[3]]<-dimnames(dd.uci)[[3]]<-pred.season
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+# Write results
+
+save(dd, dd.lci, dd.uci, SpTable, site.list,
+     file = paste0(root,
+                   "data/processed/detection-distance/predictions/Detection distances by site species and season_",
+                   Sys.Date(),
+                   ".rdata"))
+
+#-----------------------------------------------------------------------------------------------------------------------

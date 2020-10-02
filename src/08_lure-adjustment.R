@@ -19,7 +19,7 @@ root <- "G:/Shared drives/ABMI Camera Mammals/"
 df_lure <- read_csv(paste0(root, "data/lookup/lure/all-cam-lure_2020-06-01.csv"))
 
 # Read in density data:
-df_density <- read_csv(paste0(root, "results/density/Marcus/abmi-all-years_density_2020-06-09.csv"))
+df_density <- read_csv(paste0(root, "results/density/Marcus/abmi-all-years_density_2020-07-30.csv"))
 
 #-----------------------------------------------------------------------------------------------------------------------
 

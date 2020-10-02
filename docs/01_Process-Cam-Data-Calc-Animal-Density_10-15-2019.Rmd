@@ -25,7 +25,7 @@ always_allow_html: yes
 urlcolor: blue
 ---
 
-```{r setup, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE}
+```{r nosetup, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, eval=TRUE}
 
 # Load packages
 library(tidyverse)

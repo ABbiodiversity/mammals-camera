@@ -1,0 +1,52 @@
+---
+title: "wmu328"
+author: "Marcus Becker"
+date: "02/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(leaflet)
+library(sf)
+library(dplyr)
+library(leaflet.extras)
+
+root <- "G:/Shared drives/ABMI Camera Mammals/data/spatial/"
+
+# Load data
+wmu328 <- st_read(paste0(root, "wmu328_shunda.shp"), quiet = TRUE, stringsAsFactors = FALSE) %>%
+  st_transform(4326)
+points <- st_read(paste0(root, "wmu328_camera_points.shp"), quiet = TRUE, stringsAsFactors = FALSE) %>%
+  st_transform(4326)
+grids <- st_read(paste0(root, "wmu328_monitoring_grids.shp"), quiet = TRUE, stringsAsFactors = FALSE) %>%
+  st_transform(4326)
+
+# Make map
+map <- wmu328 %>%
+  leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("Esri.WorldImagery", group = "Satellite Imagery") %>%
+  addFullscreenControl() %>%
+  addResetMapButton() %>%
+  addScaleBar(position = "bottomleft", options = scaleBarOptions(imperial = FALSE)) %>%
+  
+  addPolygons(color = "white", weight = 3, smoothFactor = 0.2, group = "WMU 328 Shunda Boundary", fillOpacity = 0.1) %>%
+  
+  addPolygons(data = grids, color = "orange", weight = 3, smoothFactor = 0.2, group = "Proposed Monitoring Grids", fillOpacity = 0.05) %>%
+  
+  addCircleMarkers(data = points, stroke = FALSE, radius = 5, fillColor = "darkblue", fillOpacity = 1, group = "Proposed Camera Sites") %>%
+  
+  addLayersControl(overlayGroups = c("Satellite Imagery", "WMU 328 Shunda Boundary", "Proposed Monitoring Grids", "Proposed Camera Sites"),
+                   options = layersControlOptions(collapsed = FALSE))
+
+map
+
+htmlwidgets::saveWidget(map, file = "./docs/wmushunda.html", selfcontained = TRUE)
+
+```
+

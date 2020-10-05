@@ -46,7 +46,7 @@ map <- wmu328 %>%
 
 map
 
-htmlwidgets::saveWidget(map, file = "./docs/wmushunda.html", selfcontained = TRUE)
+htmlwidgets::saveWidget(map, file = "wmu328_shunda.html", selfcontained = TRUE)
 
 ```
 

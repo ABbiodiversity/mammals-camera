@@ -21,7 +21,7 @@ root <- "G:/Shared drives/ABMI Camera Mammals/data/spatial/"
 # Load data
 wmu328 <- st_read(paste0(root, "wmu328_shunda.shp"), quiet = TRUE, stringsAsFactors = FALSE) %>%
   st_transform(4326)
-points <- st_read(paste0(root, "wmu328_camera_points.shp"), quiet = TRUE, stringsAsFactors = FALSE) %>%
+points <- st_read(paste0(root, "proposed_sampling_points.shp"), quiet = TRUE, stringsAsFactors = FALSE) %>%
   st_transform(4326)
 grids <- st_read(paste0(root, "wmu328_monitoring_grids.shp"), quiet = TRUE, stringsAsFactors = FALSE) %>%
   st_transform(4326)

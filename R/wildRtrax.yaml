@@ -1,0 +1,27 @@
+servers:
+  - url: ''
+openapi: 3.0.3
+info:
+  description: API to the moose image gap predictions model used by the ABMI
+  title: Moose image gap predictions
+  version: 1.0.0
+paths:
+  /gap_predict:
+    post:
+      summary: 'Predict the probability of whether a moose left the camera field of view based on gaps between images.'
+      responses:
+        default:
+          description: Default response.
+      parameters: []
+      requestBody:
+        description: Image gap data
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                x:
+                  type: number
+                  title: "Difference in time between images, in seconds"
+                  example: 60
